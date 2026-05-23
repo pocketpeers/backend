@@ -31,13 +31,13 @@ public class OpenApiConfiguration implements WebMvcConfigurer {
         var openApi = new OpenAPI();
         openApi
                 .info(new Info()
-                        .title("B4U Pocket Partners API")
-                        .description("B4U Pocket Partners application REST API documentation.")
+                        .title("Pocket Peers API")
+                        .description("Pocket Peers application REST API documentation.")
                         .version("v1.0.0")
                         .license(new License().name("Apache 2.0")
                                 .url("https://springdoc.org")))
                 .externalDocs(new ExternalDocumentation()
-                        .description("B4U Pocket Partners wiki Documentation")
+                        .description("Pocket Peers wiki Documentation")
                         .url("https://github.com/PocketPartners/Informe"));
 
         final String securitySchemeName = "bearerAuth";
