@@ -73,7 +73,7 @@ public class GroupController {
     public ResponseEntity<List<GroupResource>> getAllGroupsByUserId(@PathVariable Long userId) {
         var query = new GetAllGroupsByUserIdQuery(userId);
         var groups = groupQueryService.handle(query);
-        if (groups.isEmpty()) return ResponseEntity.notFound().build();
+        //if (groups.isEmpty()) return ResponseEntity.notFound().build();
         var groupResources = groups.stream().map(GroupResourceFromEntityAssembler::toResourceFromEntity).collect(Collectors.toList());
         return ResponseEntity.ok(groupResources);
     }
@@ -117,8 +117,5 @@ public class GroupController {
         var token = groupCommandService.handle(command);
         return ResponseEntity.ok(token);
     }
-
-
-
 
 }
