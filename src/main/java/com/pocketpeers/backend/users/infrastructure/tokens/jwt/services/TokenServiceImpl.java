@@ -16,6 +16,8 @@ import org.springframework.util.StringUtils;
 import javax.crypto.SecretKey;
 import java.nio.charset.StandardCharsets;
 import java.util.Date;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.function.Function;
 
 @Service
@@ -48,10 +50,15 @@ public class TokenServiceImpl implements BearerTokenService {
     /**
      * This method generates a JWT token from a username
      * @param username the username
+     * @param role the role of the user
+     * @param fullName the full name of the user
+     * @param phoneNumber the phone number of the user
+     * @param photo the photo of the user
+     * @param email the email of the user
      * @return String the JWT token
      */
-    public String generateToken(String username) {
-        return buildTokenWithDefaultParameters(username);
+    public String generateToken(String username, String role, String fullName, String phoneNumber, String photo, String email) {
+        return buildTokenWithAllParameters(username, role, fullName, phoneNumber, photo, email);
     }
 
     /**
@@ -64,12 +71,35 @@ public class TokenServiceImpl implements BearerTokenService {
         var issuedAt = new Date();
         var expiration = DateUtils.addDays(issuedAt, expirationDays);
         var key = getSigningKey();
-        return Jwts.builder()
+        JwtBuilder builder = Jwts.builder()
                 .subject(username)
                 .issuedAt(issuedAt)
-                .expiration(expiration)
-                .signWith(key)
-                .compact();
+                .expiration(expiration);
+        return builder.signWith(key).compact();
+    }
+
+
+    private String buildTokenWithAllParameters(String username, String role, String fullName, String phoneNumber, String photo, String email) {
+        var issuedAt = new Date();
+        var expiration = DateUtils.addDays(issuedAt, expirationDays);
+        var key = getSigningKey();
+        JwtBuilder builder = Jwts.builder()
+                .subject(username)
+                .issuedAt(issuedAt)
+                .expiration(expiration);
+
+        Map<String, Object> userInformation = new HashMap<>();
+        if (StringUtils.hasText(role)) userInformation.put("role", role);
+        if (StringUtils.hasText(fullName)) userInformation.put("fullName", fullName);
+        if (StringUtils.hasText(phoneNumber)) userInformation.put("phoneNumber", phoneNumber);
+        if (StringUtils.hasText(photo)) userInformation.put("photo", photo);
+        if (StringUtils.hasText(email)) userInformation.put("email", email);
+
+        if (!userInformation.isEmpty()) {
+            builder.claim("userInformation", userInformation);
+        }
+
+        return builder.signWith(key).compact();
     }
 
     /**
