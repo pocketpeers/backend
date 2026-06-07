@@ -13,4 +13,5 @@ public interface UserInformationQueryService {
     List<UserInformation> handle(GetAllUsersInformationQuery query);
     Optional<UserInformation> handle(GetUserInformationByIdQuery query);
     Optional<UserInformation> handle(GetUserInformationByUserIdQuery query);
+    Optional<UserInformation> getByUsername(String username);
 }
