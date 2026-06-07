@@ -17,7 +17,6 @@ import java.util.List;
  */
 @Getter
 @Entity
-@Table(name = "pocket_groups")
 public class Group extends AuditableAbstractAggregateRoot<Group> {
 
 
