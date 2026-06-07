@@ -5,7 +5,7 @@ import com.pocketpeers.backend.operations.domain.model.aggregates.Payment;
 import com.pocketpeers.backend.operations.domain.model.queries.*;
 import com.pocketpeers.backend.operations.domain.services.PaymentQueryService;
 import com.pocketpeers.backend.operations.infrastructure.persistence.jpa.repositories.PaymentRepository;
-import com.pocketpeers.backend.users.infrastructure.persistence.jpa.repositories.UserInformationRepository;
+import com.pocketpeers.backend.users.infrastructure.persistence.jpa.repositories.UserRepository;
 import lombok.AllArgsConstructor;
 import org.springframework.stereotype.Service;
 
@@ -17,7 +17,7 @@ import java.util.Optional;
 public class PaymentQueryServiceImpl implements PaymentQueryService {
 
     private final PaymentRepository paymentRepository;
-    private final UserInformationRepository userInformationRepository;
+    private final UserRepository userRepository;
 
 
     @Override
@@ -31,8 +31,8 @@ public class PaymentQueryServiceImpl implements PaymentQueryService {
     }
 
     @Override
-        public List<Payment> handle(GetAllPaymentsByUserInformationIdQuery query){
-        return paymentRepository.findAllByUserInformationId(query.userInformationId());
+        public List<Payment> handle(GetAllPaymentsByUserIdQuery query){
+        return paymentRepository.findAllByUser_Id(query.userId());
     }
 
     @Override
@@ -41,22 +41,22 @@ public class PaymentQueryServiceImpl implements PaymentQueryService {
     }
 
     @Override
-    public Optional<Payment> handle(GetPaymentByUserInformationIdAndExpenseId query){
-        return paymentRepository.findByUserInformationIdAndExpenseId(query.userInformationId(), query.expenseId());
+    public Optional<Payment> handle(GetPaymentByUserIdAndExpenseId query){
+        return paymentRepository.findByUser_IdAndExpenseId(query.userId(), query.expenseId());
     }
 
     @Override
     public List<Payment> handle(GetAllPaymentsByUserIdAndStatusQuery query){
-        return paymentRepository.findAllByUserInformationIdAndStatus(query.userInformationId(), query.status());
+        return paymentRepository.findAllByUser_IdAndStatus(query.userId(), query.status());
     }
 
     @Override
-    public List<Payment> handle(GetIncomingPaymentsByUserInformationIdQuery query) {
-        var userInformation = this.userInformationRepository.findById(query.userInformationId());
-        if(userInformation.isEmpty())
-            throw new IllegalArgumentException("User information not found for ID: " + query.userInformationId());
-        var payments = paymentRepository.findIncomingPaymentsByUserInformation(
-                userInformation.get().getId(),
+    public List<Payment> handle(GetIncomingPaymentsByUserIdQuery query) {
+        var user = this.userRepository.findById(query.userId());
+        if(user.isEmpty())
+            throw new IllegalArgumentException("User information not found for ID: " + query.userId());
+        var payments = paymentRepository.findIncomingPaymentsByUser(
+                user.get().getId(),
                 GroupRole.ADMIN
         );
         return payments;

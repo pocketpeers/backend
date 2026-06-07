@@ -5,6 +5,6 @@ import com.pocketpeers.backend.groups.interfaces.rest.resources.GroupMemberResou
 
 public class GroupMemberResourceFromEntityAssembler {
     public static GroupMemberResource fromEntityToResource(GroupMember resource) {
-        return new GroupMemberResource(resource.getGroup().getId(), resource.getUserInformation().getId(), resource.getUserInformation().getFullName(), resource.getRole(), resource.getJoinedAt());
+        return new GroupMemberResource(resource.getGroup().getId(), resource.getUser().getId(), resource.getUser().getUserInformation().getFullName(), resource.getRole(), resource.getJoinedAt());
     }
 }

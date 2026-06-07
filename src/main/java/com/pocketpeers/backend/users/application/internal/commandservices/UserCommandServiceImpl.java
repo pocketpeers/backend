@@ -13,6 +13,7 @@ import com.pocketpeers.backend.users.domain.services.UserInformationCommandServi
 import com.pocketpeers.backend.users.domain.services.UserInformationQueryService;
 import com.pocketpeers.backend.users.infrastructure.persistence.jpa.repositories.RoleRepository;
 import com.pocketpeers.backend.users.infrastructure.persistence.jpa.repositories.UserRepository;
+import jakarta.transaction.Transactional;
 import org.apache.commons.lang3.tuple.ImmutablePair;
 import org.springframework.stereotype.Service;
 
@@ -86,6 +87,7 @@ public class UserCommandServiceImpl implements UserCommandService {
      * @return Optional<User> Updated user.
      */
     @Override
+    @Transactional
     public Optional<User> handle(SignUpCommand command) {
         if (userRepository.existsByUsername(command.username()))
             throw new RuntimeException("Username already exists");

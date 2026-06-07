@@ -5,7 +5,7 @@ import com.pocketpeers.backend.operations.domain.model.valueobjects.Amount;
 import com.pocketpeers.backend.operations.domain.model.valueobjects.Description;
 import com.pocketpeers.backend.operations.domain.model.valueobjects.PaymentStatus;
 import com.pocketpeers.backend.shared.domain.model.aggregates.AuditableAbstractAggregateRoot;
-import com.pocketpeers.backend.users.domain.model.aggregates.UserInformation;
+import com.pocketpeers.backend.users.domain.model.aggregates.User;
 import jakarta.persistence.*;
 import lombok.Getter;
 
@@ -29,7 +29,7 @@ public class Payment extends AuditableAbstractAggregateRoot<Payment> {
     @Getter
     @ManyToOne
     @JoinColumn(name = "user_id")
-    private UserInformation userInformation;
+    private User user;
 
     @Getter
     @ManyToOne
@@ -42,11 +42,11 @@ public class Payment extends AuditableAbstractAggregateRoot<Payment> {
 
     public Payment() {}
 
-    public Payment(String description, BigDecimal amount, UserInformation userInformation, Expense expense) {
+    public Payment(String description, BigDecimal amount, User user, Expense expense) {
         this.description = new Description(description);
         this.amount = new Amount(amount);
         this.status = PaymentStatus.PENDING;
-        this.userInformation = userInformation;
+        this.user = user;
         this.expense = expense;
     }
 
@@ -66,7 +66,7 @@ public class Payment extends AuditableAbstractAggregateRoot<Payment> {
 
     public Amount getAmountAsObject(){return this.amount;}
 
-    public String getStatus(){return this.status.name().toLowerCase();}
+    public String getStatus(){return this.status.name().toUpperCase();}
 
     public void addReceipt(PaymentReceipt receipt) {
         this.receipts.add(receipt);

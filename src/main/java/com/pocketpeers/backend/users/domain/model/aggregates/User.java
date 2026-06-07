@@ -32,6 +32,9 @@ public class User extends AuditableAbstractAggregateRoot<User> {
             inverseJoinColumns = @JoinColumn(name = "role_id"))
     private Set<Role> roles;
 
+    @OneToOne(mappedBy = "user", cascade = CascadeType.ALL, optional = true)
+    private UserInformation userInformation;
+
     public User() {
         this.roles = new HashSet<>();
     }
@@ -65,6 +68,10 @@ public class User extends AuditableAbstractAggregateRoot<User> {
         var validatedRoleSet = Role.validateRoleSet(roles);
         this.roles.addAll(validatedRoleSet);
         return this;
+    }
+
+    public UserInformation getUserInformation() {
+        return userInformation;
     }
 
 }

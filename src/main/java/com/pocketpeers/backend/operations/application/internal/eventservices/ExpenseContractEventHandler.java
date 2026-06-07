@@ -36,6 +36,7 @@ public class ExpenseContractEventHandler {
                         event.payment().getExpense(),
                         event.payment()
                 );
+        System.out.println("Payment added to expense contract with transaction hash: " + transactionHash.hash());
     }
 
     @EventListener(PaymentUpdatedEvent.class)
@@ -45,6 +46,7 @@ public class ExpenseContractEventHandler {
                 event.payment(),
                 PaymentStatus.valueOf(event.payment().getStatus())
         );
+        System.out.println("Payment status updated in expense contract with transaction hash: " + transactionHash.hash());
     }
 
 }

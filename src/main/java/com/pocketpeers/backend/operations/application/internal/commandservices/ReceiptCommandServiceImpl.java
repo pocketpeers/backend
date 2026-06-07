@@ -12,6 +12,7 @@ import com.pocketpeers.backend.operations.domain.model.entities.OcrReceipt;
 import com.pocketpeers.backend.operations.domain.model.entities.PaymentReceipt;
 import com.pocketpeers.backend.operations.domain.model.entities.Receipt;
 import com.pocketpeers.backend.operations.domain.model.valueobjects.Amount;
+import com.pocketpeers.backend.operations.domain.ports.out.ReceiptOcrPort;
 import com.pocketpeers.backend.operations.domain.services.ReceiptCommandService;
 import com.pocketpeers.backend.operations.infrastructure.persistence.jpa.repositories.ExpenseRepository;
 import com.pocketpeers.backend.operations.infrastructure.persistence.jpa.repositories.PaymentRepository;
@@ -27,6 +28,7 @@ public class ReceiptCommandServiceImpl implements ReceiptCommandService {
     private ReceiptRepository receiptRepository;
     private ExpenseRepository expenseRepository;
     private PaymentRepository paymentRepository;
+    private ReceiptOcrPort receiptOcrPort;
 
     @Override
     public Receipt handle(CreateReceiptForPaymentCommand command) {
@@ -100,6 +102,30 @@ public class ReceiptCommandServiceImpl implements ReceiptCommandService {
 
         receiptRepository.save(receipt);
         return receipt;
+    }
+
+    @Override
+    public OcrReceipt handle(CreateOcrReceiptFromReceiptCommand command) {
+        var receipt = receiptRepository.findById(command.originalReceiptId())
+                .orElseThrow(()-> new ReceiptNotFoundException(command.originalReceiptId()));
+
+        if(receipt.getImagePath()==null) {
+            throw new IllegalArgumentException("Receipt image path is not set for OCR processing.");
+        }
+
+        if(receipt.getOcrReceipt() != null) {
+            return receipt.getOcrReceipt(); // Return existing OCR receipt if it already exists
+        }
+
+        OcrReceipt ocrReceipt = receiptOcrPort.processReceiptImage(receipt.getImagePath());
+        ocrReceipt.assignToOriginalReceipt(receipt);
+        receiptRepository.save(ocrReceipt);
+        return ocrReceipt;
+    }
+
+    @Override
+    public OcrReceipt handle(CreateOcrReceiptFromImageCommand command) {
+        return receiptOcrPort.processReceiptImage(command.imageUrl());
     }
 
     @Override

@@ -222,7 +222,7 @@ public class ExpenseSmartContractAdapter implements ExpenseSmartContractPort {
         buffer.put((byte) 0);
         buffer.putLong(expense.getId());
         buffer.putLong(expense.getAmount().longValue());
-        buffer.putLong(expense.getUserInformation().getId());
+        buffer.putLong(expense.getUser().getId());
         buffer.putLong(expense.getDueDate().toEpochDay());
         buffer.putLong(expense.getGroup().getId());
         return buffer.array();
@@ -233,7 +233,7 @@ public class ExpenseSmartContractAdapter implements ExpenseSmartContractPort {
         buffer.put((byte) 1);
         buffer.putLong(payment.getId());
         buffer.putLong(payment.getAmount().longValue());
-        buffer.putLong(payment.getUserInformation().getId());
+        buffer.putLong(payment.getUser().getId());
         return buffer.array();
     }
 

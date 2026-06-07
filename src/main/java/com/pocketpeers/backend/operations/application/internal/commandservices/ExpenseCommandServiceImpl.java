@@ -14,8 +14,9 @@ import com.pocketpeers.backend.operations.domain.model.events.ExpenseCreatedEven
 import com.pocketpeers.backend.operations.domain.services.ExpenseCommandService;
 import com.pocketpeers.backend.operations.infrastructure.persistence.jpa.repositories.ExpenseRepository;
 import com.pocketpeers.backend.operations.infrastructure.persistence.jpa.repositories.PaymentRepository;
+import com.pocketpeers.backend.users.domain.model.aggregates.User;
 import com.pocketpeers.backend.users.domain.model.aggregates.UserInformation;
-import com.pocketpeers.backend.users.infrastructure.persistence.jpa.repositories.UserInformationRepository;
+import com.pocketpeers.backend.users.infrastructure.persistence.jpa.repositories.UserRepository;
 import jakarta.transaction.Transactional;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
@@ -28,16 +29,16 @@ public class ExpenseCommandServiceImpl implements ExpenseCommandService {
     private final PaymentRepository paymentRepository;
     private final GroupOperationRepository groupOperationRepository;
     private final ExpenseRepository expenseRepository;
-    private final UserInformationRepository userInformationRepository;
+    private final UserRepository userRepository;
     private final GroupRepository groupRepository;
     private final ExpenseQueryServiceImpl expenseQueryServiceImpl;
     private final ApplicationEventPublisher applicationEventPublisher;
 
-    public ExpenseCommandServiceImpl(PaymentRepository paymentRepository, GroupOperationRepository groupOperationRepository, ExpenseRepository expenseRepository, UserInformationRepository userInformationRepository, GroupRepository groupRepository, ExpenseQueryServiceImpl expenseQueryServiceImpl, ApplicationEventPublisher applicationEventPublisher) {
+    public ExpenseCommandServiceImpl(PaymentRepository paymentRepository, GroupOperationRepository groupOperationRepository, ExpenseRepository expenseRepository, UserRepository userRepository, GroupRepository groupRepository, ExpenseQueryServiceImpl expenseQueryServiceImpl, ApplicationEventPublisher applicationEventPublisher) {
         this.paymentRepository = paymentRepository;
         this.groupOperationRepository = groupOperationRepository;
         this.expenseRepository = expenseRepository;
-        this.userInformationRepository = userInformationRepository;
+        this.userRepository = userRepository;
         this.groupRepository = groupRepository;
         this.expenseQueryServiceImpl = expenseQueryServiceImpl;
         this.applicationEventPublisher = applicationEventPublisher;
@@ -45,7 +46,7 @@ public class ExpenseCommandServiceImpl implements ExpenseCommandService {
 
     @Override
     public Optional<Expense> handle(CreateExpenseCommand command) {
-        Optional<UserInformation> user = userInformationRepository.findById(command.userId());
+        Optional<User> user = userRepository.findById(command.userId());
         Optional<Group> group = groupRepository.findById(command.groupId());
 
         if (user.isEmpty()) {

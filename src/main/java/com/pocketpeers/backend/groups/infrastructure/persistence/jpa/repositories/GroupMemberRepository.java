@@ -2,6 +2,7 @@ package com.pocketpeers.backend.groups.infrastructure.persistence.jpa.repositori
 
 import com.pocketpeers.backend.groups.domain.model.aggregates.Group;
 import com.pocketpeers.backend.groups.domain.model.entities.GroupMember;
+import com.pocketpeers.backend.users.domain.model.aggregates.User;
 import com.pocketpeers.backend.users.domain.model.aggregates.UserInformation;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
@@ -11,9 +12,9 @@ import java.util.Optional;
 
 @Repository
 public interface GroupMemberRepository extends JpaRepository<GroupMember, Long> {
-    Optional<GroupMember> findByGroupIdAndUserInformationId(Long groupId, Long userInformationId);
+    Optional<GroupMember> findByGroupIdAndUser_Id(Long groupId, Long userId);
     List<GroupMember> findAllByGroupId(Long groupId);
-    List<GroupMember> findAllByUserInformationId(Long userInformationId);
-    boolean existsByGroupAndUserInformation(Group group, UserInformation userInformation);
+    List<GroupMember> findAllByUser_Id(Long userId);
+    boolean existsGroupMemberByGroupAndUser(Group group, User user);
     void deleteByGroupId(Long groupId);
 }

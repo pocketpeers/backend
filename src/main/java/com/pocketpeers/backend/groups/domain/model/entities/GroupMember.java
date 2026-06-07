@@ -3,7 +3,7 @@ package com.pocketpeers.backend.groups.domain.model.entities;
 import com.pocketpeers.backend.groups.domain.model.aggregates.Group;
 import com.pocketpeers.backend.groups.domain.model.valueobjects.GroupMemberId;
 import com.pocketpeers.backend.groups.domain.model.valueobjects.GroupRole;
-import com.pocketpeers.backend.users.domain.model.aggregates.UserInformation;
+import com.pocketpeers.backend.users.domain.model.aggregates.User;
 import com.fasterxml.jackson.annotation.JsonFormat;
 import jakarta.persistence.*;
 import lombok.Getter;
@@ -40,7 +40,7 @@ public class GroupMember {
     @Id
     @ManyToOne
     @JoinColumn(name = "user_id")
-    private UserInformation userInformation;
+    private User user;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
@@ -59,11 +59,11 @@ public class GroupMember {
      * Constructs a new GroupMember with the provided group and user.
      *
      * @param group The group that the user is joining.
-     * @param userInformation The user who is joining the group.
+     * @param user The user who is joining the group.
      */
-    public GroupMember(Group group, UserInformation userInformation, GroupRole role) {
+    public GroupMember(Group group, User user, GroupRole role) {
         this.group = group;
-        this.userInformation = userInformation;
+        this.user = user;
         this.role = role;
         this.joinedAt = new Date();
     }
@@ -77,7 +77,7 @@ public class GroupMember {
 
     public Long getIdAdmin() {
         if (this.role == GroupRole.ADMIN) {
-            return this.userInformation.getId();
+            return this.user.getId();
         }
         return null;
     }

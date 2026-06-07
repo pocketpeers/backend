@@ -3,6 +3,7 @@ package com.pocketpeers.backend.operations.domain.services;
 import com.pocketpeers.backend.operations.domain.model.aggregates.Expense;
 import com.pocketpeers.backend.operations.domain.model.queries.GetAllExpensesByDueDate;
 import com.pocketpeers.backend.operations.infrastructure.twilio.TwilioSmsService;
+import com.pocketpeers.backend.users.domain.model.aggregates.User;
 import com.pocketpeers.backend.users.domain.model.aggregates.UserInformation;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.scheduling.annotation.EnableScheduling;
@@ -45,8 +46,8 @@ public class ExpensesNotificationService {
     }
 
     private void sendReminder(Expense expense, String message) {
-        UserInformation userInformation = expense.getUserInformation();
-        String phoneNumber = userInformation.getPhoneNumber();
+        User user = expense.getUser();
+        String phoneNumber = user.getUserInformation().getPhoneNumber();
 
         twilioSmsService.sendReminder(phoneNumber, message);
     }

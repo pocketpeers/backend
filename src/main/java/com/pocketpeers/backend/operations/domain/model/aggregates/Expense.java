@@ -4,7 +4,7 @@ import com.pocketpeers.backend.groups.domain.model.aggregates.Group;
 import com.pocketpeers.backend.operations.domain.model.entities.ExpenseReceipt;
 import com.pocketpeers.backend.operations.domain.model.valueobjects.*;
 import com.pocketpeers.backend.shared.domain.model.aggregates.AuditableAbstractAggregateRoot;
-import com.pocketpeers.backend.users.domain.model.aggregates.UserInformation;
+import com.pocketpeers.backend.users.domain.model.aggregates.User;
 import jakarta.persistence.*;
 import lombok.Getter;
 
@@ -25,7 +25,7 @@ public class Expense extends AuditableAbstractAggregateRoot<Expense> {
 
     @ManyToOne
     @JoinColumn(name = "user_id")
-    private UserInformation userInformation;
+    private User user;
 
     @ManyToOne
     @JoinColumn(name = "group_id")
@@ -41,10 +41,10 @@ public class Expense extends AuditableAbstractAggregateRoot<Expense> {
     @OneToMany(mappedBy = "expense", cascade = CascadeType.ALL, orphanRemoval = true)
     private List<ExpenseReceipt> receipts = new ArrayList<>();
 
-    public Expense(String name, BigDecimal amount, UserInformation userInformation, Group group, LocalDate dueDate) {
+    public Expense(String name, BigDecimal amount, User user, Group group, LocalDate dueDate) {
         this.name = new ExpenseName(name);
         this.amount = new Amount(amount);
-        this.userInformation = userInformation;
+        this.user = user;
         this.group = group;
         this.dueDate = new DueDate(dueDate);
     }

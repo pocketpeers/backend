@@ -62,9 +62,8 @@ public class PaymentController {
 
     @GetMapping("/userId/{userId}")
     public ResponseEntity<List<PaymentResource>> getPaymentByUserId(@PathVariable Long userId) {
-        var getAllPaymentsByUserIdQuery = new GetAllPaymentsByUserInformationIdQuery(userId);
+        var getAllPaymentsByUserIdQuery = new GetAllPaymentsByUserIdQuery(userId);
         var payments = paymentQueryService.handle(getAllPaymentsByUserIdQuery);
-        if (payments.isEmpty()){return ResponseEntity.notFound().build();}
         var paymentResources = payments.stream().map(PaymentResourceFromEntityAssembler::toResourceFromEntity).toList();
         return ResponseEntity.ok(paymentResources);
     }
@@ -73,7 +72,6 @@ public class PaymentController {
     public ResponseEntity<List<PaymentResource>> getPaymentByExpenseId(@PathVariable Long expenseId) {
         var getAllPaymentsByExpenseIdQuery = new GetAllPaymentsByExpenseIdQuery(expenseId);
         var payments = paymentQueryService.handle(getAllPaymentsByExpenseIdQuery);
-        if (payments.isEmpty()){return ResponseEntity.notFound().build();}
         var paymentResources = payments.stream().map(PaymentResourceFromEntityAssembler::toResourceFromEntity).toList();
         return ResponseEntity.ok(paymentResources);
     }
@@ -82,7 +80,6 @@ public class PaymentController {
     public ResponseEntity<PaymentResource> getPaymentById(@PathVariable Long paymentId) {
         var getPaymentByIdQuery = new GetPaymentByIdQuery(paymentId);
         var payment = paymentQueryService.handle(getPaymentByIdQuery);
-        if (payment.isEmpty()) return ResponseEntity.badRequest().build();
         var paymentResource = PaymentResourceFromEntityAssembler.toResourceFromEntity(payment.get());
         return ResponseEntity.ok(paymentResource);
     }
@@ -91,16 +88,14 @@ public class PaymentController {
     public ResponseEntity<List<PaymentResource>> getPaymentByGroupIdAndUserIdAndStatus(@PathVariable Long userId, @PathVariable PaymentStatus status) {
         var getAllPaymentsByUserIdAndStatusQuery = new GetAllPaymentsByUserIdAndStatusQuery(userId, status);
         var payments = paymentQueryService.handle(getAllPaymentsByUserIdAndStatusQuery);
-        if (payments.isEmpty()){return ResponseEntity.notFound().build();}
         var paymentResources = payments.stream().map(PaymentResourceFromEntityAssembler::toResourceFromEntity).toList();
         return ResponseEntity.ok(paymentResources);
     }
 
-    @GetMapping("/incoming/{userInformationId}")
-    public ResponseEntity<List<PaymentResource>> getIncomingPaymentsByUserInformationId(@PathVariable Long userInformationId) {
-        var getIncomingPaymentsByUserInformationIdQuery = new GetIncomingPaymentsByUserInformationIdQuery(userInformationId);
-        var payments = paymentQueryService.handle(getIncomingPaymentsByUserInformationIdQuery);
-        if (payments.isEmpty()) return ResponseEntity.notFound().build();
+    @GetMapping("/incoming/{userId}")
+    public ResponseEntity<List<PaymentResource>> getIncomingPaymentsByUserId(@PathVariable Long userId) {
+        var getIncomingPaymentsByUserIdQuery = new GetIncomingPaymentsByUserIdQuery(userId);
+        var payments = paymentQueryService.handle(getIncomingPaymentsByUserIdQuery);
         var paymentResources = payments.stream().map(PaymentResourceFromEntityAssembler::toResourceFromEntity).toList();
         return ResponseEntity.ok(paymentResources);
     }
