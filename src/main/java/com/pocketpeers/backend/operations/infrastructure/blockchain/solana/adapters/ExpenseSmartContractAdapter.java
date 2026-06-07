@@ -11,6 +11,7 @@ import com.pocketpeers.backend.operations.domain.ports.out.ExpenseSmartContractP
 import com.pocketpeers.backend.operations.infrastructure.blockchain.solana.services.SolanaClient;
 import com.pocketpeers.backend.operations.infrastructure.persistence.jpa.repositories.ContractTransactionRepository;
 import com.pocketpeers.backend.operations.infrastructure.persistence.jpa.repositories.ExpenseContractRepository;
+import jakarta.transaction.Transactional;
 import lombok.RequiredArgsConstructor;
 import org.p2p.solanaj.core.Account;
 import org.p2p.solanaj.core.AccountMeta;
@@ -136,6 +137,7 @@ public class ExpenseSmartContractAdapter implements ExpenseSmartContractPort {
     }
 
     @Override
+    @Transactional
     public TransactionHash addPaymentToExpenseContract(Expense expense, Payment payment) throws Exception {
         ExpenseContract expenseContractEntity = expenseContractRepository.findByExpense(expense)
                 .orElseThrow(() -> new RuntimeException("Expense contract not found for the given expense"));
@@ -173,10 +175,13 @@ public class ExpenseSmartContractAdapter implements ExpenseSmartContractPort {
 
         contractTransactionRepository.save(transaction);
 
+        obtenerSaldoBackend();
+
         return transactionHash;
     }
 
     @Override
+    @Transactional
     public TransactionHash updatePaymentStatus(Payment payment, PaymentStatus status) throws Exception {
         ExpenseContract expenseContractEntity = expenseContractRepository.findByExpense(payment.getExpense())
                 .orElseThrow(() -> new Exception("Expense contract not found for the given payment"));
@@ -206,6 +211,8 @@ public class ExpenseSmartContractAdapter implements ExpenseSmartContractPort {
         contractTransaction.setTransactionHash(transactionHash);
 
         contractTransactionRepository.save(contractTransaction);
+
+        obtenerSaldoBackend();
 
         return transactionHash;
     }
