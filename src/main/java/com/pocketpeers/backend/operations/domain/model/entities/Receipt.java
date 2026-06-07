@@ -25,6 +25,8 @@ public abstract class Receipt extends AuditableModel {
     private String imagePath;
     private Boolean isActive = true;
 
+    @OneToOne(mappedBy = "originalReceipt", cascade = CascadeType.ALL, orphanRemoval = true)
+    private OcrReceipt ocrReceipt;
 
     public Receipt(){};
 
