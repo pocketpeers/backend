@@ -69,6 +69,9 @@ public class PaymentCommandServiceImpl implements PaymentCommandService {
             if (!expense.getUser().getUsername().equals(command.username())) {
                 throw new RuntimeException("Only the creator of the expense can confirm the payment");
             }
+            if (payment.getConfirmed()) {
+                throw new RuntimeException("Payment is already confirmed");
+            }
             payment.confirmPayment();
             paymentRepository.save(payment);
             applicationEventPublisher.publishEvent(new PaymentUpdatedEvent(payment));
