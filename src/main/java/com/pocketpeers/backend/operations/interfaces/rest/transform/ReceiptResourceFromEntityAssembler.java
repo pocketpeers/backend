@@ -11,7 +11,7 @@ public class ReceiptResourceFromEntityAssembler {
                 receipt.getId(),
                 receipt.getName(),
                 receipt.getReceiptNumber(),
-                receipt.getAmount().amount(),
+                receipt.getAmount(),
                 receipt.getIssueDate(),
                 receipt.getImagePath()
         );
@@ -22,7 +22,7 @@ public class ReceiptResourceFromEntityAssembler {
                 receipt.getId(),
                 receipt.getName(),
                 receipt.getReceiptNumber(),
-                receipt.getAmount().amount(),
+                receipt.getAmount(),
                 receipt.getIssueDate(),
                 receipt.getImagePath(),
                 receipt.getOcrData().dataFields()

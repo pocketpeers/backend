@@ -1,8 +1,6 @@
 package com.pocketpeers.backend.operations.domain.model.aggregates;
 
-import com.pocketpeers.backend.operations.domain.model.entities.PaymentReceipt;
-import com.pocketpeers.backend.operations.domain.model.valueobjects.Amount;
-import com.pocketpeers.backend.operations.domain.model.valueobjects.Description;
+import com.pocketpeers.backend.operations.domain.model.entities.PaymentEvidence;
 import com.pocketpeers.backend.operations.domain.model.valueobjects.PaymentStatus;
 import com.pocketpeers.backend.shared.domain.model.aggregates.AuditableAbstractAggregateRoot;
 import com.pocketpeers.backend.users.domain.model.aggregates.User;
@@ -17,13 +15,18 @@ import java.util.List;
 public class Payment extends AuditableAbstractAggregateRoot<Payment> {
 
     @Getter
-    @Embedded
-    private Description description;
+    private String description;
 
     @Getter
-    @Embedded
-    private Amount amount;
+    private BigDecimal amount;
 
+    @Getter
+    private BigDecimal amountPaid;
+
+    @Getter
+    private Boolean confirmed;
+
+    @Enumerated(EnumType.STRING)
     private PaymentStatus status;
 
     @Getter
@@ -38,39 +41,47 @@ public class Payment extends AuditableAbstractAggregateRoot<Payment> {
 
     @Getter
     @OneToMany(mappedBy = "payment", cascade = CascadeType.ALL, orphanRemoval = true)
-    private List<PaymentReceipt> receipts = new ArrayList<>();
+    private List<PaymentEvidence> evidences = new ArrayList<>();
 
     public Payment() {}
 
     public Payment(String description, BigDecimal amount, User user, Expense expense) {
-        this.description = new Description(description);
-        this.amount = new Amount(amount);
+        this.description = description;
+        this.amount = amount;
+        this.amountPaid = BigDecimal.ZERO;
+        this.confirmed = false;
         this.status = PaymentStatus.PENDING;
         this.user = user;
         this.expense = expense;
     }
 
-    public Payment UpdateInformation(String newDescription, BigDecimal newAmount){
-        this.description = new Description(newDescription);
-        this.amount = new Amount(newAmount);
+    public Payment updateInformation(String newDescription, BigDecimal newAmount){
+        this.description = newDescription;
+        this.amount = newAmount;
         return this;
     }
 
-    public void completePayment(){
-        this.status = PaymentStatus.COMPLETED;
+    public void pay(BigDecimal amount) {
+        this.amountPaid = this.amountPaid.add(amount);
+        if (this.amountPaid.compareTo(this.amount) > 0) {
+            throw new IllegalArgumentException("Partial payment cannot exceed total amount");
+        } else if (this.amountPaid.compareTo(this.amount) < 0) {
+            this.status = PaymentStatus.PARTIAL;
+        } else {
+            this.status = PaymentStatus.COMPLETED;
+        }
     }
 
-    public String getDescription() {return description.getDescription();}
+    public void confirmPayment() {
+        this.confirmed = true;
+    }
 
-    public BigDecimal getAmount(){return amount.getAmount();}
+    public String getStatus() {
+        return this.status.name().toUpperCase();
+    }
 
-    public Amount getAmountAsObject(){return this.amount;}
-
-    public String getStatus(){return this.status.name().toUpperCase();}
-
-    public void addReceipt(PaymentReceipt receipt) {
-        this.receipts.add(receipt);
-        receipt.assignToPayment(this);
+    public void addEvidence(PaymentEvidence evidence) {
+        this.evidences.add(evidence);
+        evidence.assignToPayment(this);
     }
 }
-

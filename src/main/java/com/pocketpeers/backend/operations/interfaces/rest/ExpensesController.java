@@ -61,7 +61,6 @@ public class ExpensesController {
     public ResponseEntity<List<ExpenseResource>> getExpensesByUserId(@PathVariable Long userId) {
         var getAllExpensesByUserIdQuery = new GetAllExpensesByUserIdQuery(userId);
         var expenses = expenseQueryService.handle(getAllExpensesByUserIdQuery);
-        if (expenses.isEmpty()) {return ResponseEntity.badRequest().build();}
         var expenseResources = expenses.stream().map(ExpenseResourceFromEntityAssembler::toResourceFromEntity).toList();
         return ResponseEntity.ok(expenseResources);
     }
@@ -87,7 +86,6 @@ public class ExpensesController {
     public ResponseEntity<List<ExpenseResource>> getExpensesByGroupId(@PathVariable Long groupId) {
         var getAllExpensesByGroupIdQuery = new GetAllExpensesByGroupIdQuery(groupId);
         var expenses = expenseQueryService.handle(getAllExpensesByGroupIdQuery);
-        if (expenses.isEmpty()) {return ResponseEntity.badRequest().build();}
         var expenseResources = expenses.stream().map(ExpenseResourceFromEntityAssembler::toResourceFromEntity).toList();
         return ResponseEntity.ok(expenseResources);
     }
@@ -98,6 +96,5 @@ public class ExpensesController {
         expenseCommandService.handle(deleteExpenseCommand);
         return ResponseEntity.noContent().build();
     }
-
 
 }

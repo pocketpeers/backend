@@ -1,12 +1,14 @@
 package com.pocketpeers.backend.operations.interfaces.rest;
 
-import com.pocketpeers.backend.operations.domain.model.commands.CompletePaymentCommand;
+import com.pocketpeers.backend.operations.domain.model.commands.ConfirmPaymentCommand;
 import com.pocketpeers.backend.operations.domain.model.queries.*;
 import com.pocketpeers.backend.operations.domain.model.valueobjects.PaymentStatus;
 import com.pocketpeers.backend.operations.domain.services.PaymentCommandService;
 import com.pocketpeers.backend.operations.domain.services.PaymentQueryService;
+import com.pocketpeers.backend.operations.interfaces.rest.resources.MakePaymentResource;
 import com.pocketpeers.backend.operations.interfaces.rest.resources.CreatePaymentResource;
 import com.pocketpeers.backend.operations.interfaces.rest.resources.PaymentResource;
+import com.pocketpeers.backend.operations.interfaces.rest.transform.MakePaymentCommandFromResourceAssembler;
 import com.pocketpeers.backend.operations.interfaces.rest.transform.CreatePaymentCommandFromResourceAssembler;
 import com.pocketpeers.backend.operations.interfaces.rest.transform.PaymentResourceFromEntityAssembler;
 import com.pocketpeers.backend.shared.interfaces.rest.resources.MessageResource;
@@ -14,6 +16,7 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -38,18 +41,22 @@ public class PaymentController {
         System.out.println("Payment ID: " + paymentId);
         var getPaymentById = new GetPaymentByIdQuery(paymentId);
         var payment = paymentQueryService.handle(getPaymentById);
-        if(payment.isEmpty()){
-            return ResponseEntity.notFound().build();
-        }
         var paymentResource = PaymentResourceFromEntityAssembler.toResourceFromEntity(payment.get());
         return new ResponseEntity<>(paymentResource, HttpStatus.CREATED);
     }
 
-    @PostMapping("/{paymentId}/completed")
-    public ResponseEntity<MessageResource> completePayment(@PathVariable Long paymentId) {
-        var completePaymentCommand = new CompletePaymentCommand(paymentId);
-        paymentCommandService.handle(completePaymentCommand);
-        return ResponseEntity.ok(new MessageResource("Completed Payment with ID: " + paymentId));
+    @PostMapping("{paymentId}/pay")
+    public ResponseEntity<MessageResource> makePayment(@PathVariable Long paymentId, @RequestBody MakePaymentResource resource) {
+        var makePaymentCommand = MakePaymentCommandFromResourceAssembler.toCommandFromResource(resource, paymentId);
+        paymentCommandService.handle(makePaymentCommand);
+        return ResponseEntity.ok(new MessageResource("Updated payment with ID: " + paymentId));
+    }
+
+    @PostMapping("/{paymentId}/confirm")
+    public ResponseEntity<MessageResource> confirmPayment(@PathVariable Long paymentId, Authentication authentication) {
+        var confirmPaymentCommand = new ConfirmPaymentCommand(paymentId, authentication.getName());
+        paymentCommandService.handle(confirmPaymentCommand);
+        return ResponseEntity.ok(new MessageResource("Confirmed payment with ID: " + paymentId));
     }
 
     @GetMapping

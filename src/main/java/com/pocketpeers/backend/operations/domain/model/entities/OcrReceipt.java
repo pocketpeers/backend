@@ -1,6 +1,5 @@
 package com.pocketpeers.backend.operations.domain.model.entities;
 
-import com.pocketpeers.backend.operations.domain.model.valueobjects.Amount;
 import com.pocketpeers.backend.operations.domain.model.valueobjects.OcrData;
 import jakarta.persistence.Embedded;
 import jakarta.persistence.Entity;
@@ -9,6 +8,7 @@ import jakarta.persistence.OneToOne;
 import lombok.Getter;
 import lombok.Setter;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 
 @Entity
@@ -26,7 +26,7 @@ public class OcrReceipt extends Receipt{
     public OcrReceipt(
             String name,
             String receiptNumber,
-            Amount amount,
+            BigDecimal amount,
             LocalDate issueDate,
             String imagePath,
             OcrData ocrData

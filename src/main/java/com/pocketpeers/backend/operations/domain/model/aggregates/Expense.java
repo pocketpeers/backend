@@ -17,11 +17,9 @@ import java.util.List;
 @Entity
 public class Expense extends AuditableAbstractAggregateRoot<Expense> {
 
-    @Embedded
-    private ExpenseName name;
+    private String name;
 
-    @Embedded
-    private Amount amount;
+    private BigDecimal amount;
 
     @ManyToOne
     @JoinColumn(name = "user_id")
@@ -42,8 +40,8 @@ public class Expense extends AuditableAbstractAggregateRoot<Expense> {
     private List<ExpenseReceipt> receipts = new ArrayList<>();
 
     public Expense(String name, BigDecimal amount, User user, Group group, LocalDate dueDate) {
-        this.name = new ExpenseName(name);
-        this.amount = new Amount(amount);
+        this.name = name;
+        this.amount = amount;
         this.user = user;
         this.group = group;
         this.dueDate = new DueDate(dueDate);
@@ -53,35 +51,16 @@ public class Expense extends AuditableAbstractAggregateRoot<Expense> {
     public Expense() {
     }
 
-    public void UpdateExpenseName(String newName) {
-        this.name = new ExpenseName(newName);
-    }
-
-    public void UpdateAmount(BigDecimal newAmount) {
-        this.amount = new Amount(newAmount);
-    }
 
     public Expense UpdateInformation(String newName, BigDecimal newAmount, LocalDate newDueDate) {
-        this.name = new ExpenseName(newName);
-        this.amount = new Amount(newAmount);
+        this.name = newName;
+        this.amount = newAmount;
         this.dueDate = new DueDate(newDueDate);
         return this;
     }
 
-    public String getName() {
-        return name.getName();
-    }
-
-    public BigDecimal getAmount() {
-        return amount.getAmount();
-    }
-
     public LocalDate getDueDate() {
         return dueDate.getDueDate();
-    }
-
-    public Amount getAmountAsObject() {
-        return amount;
     }
 
     public void addReceipt(ExpenseReceipt receipt) {
@@ -90,7 +69,7 @@ public class Expense extends AuditableAbstractAggregateRoot<Expense> {
     }
 
     public String getStatus() {
-        if (this.getTotalPaidAmount().equals(this.amount.getAmount())) {
+        if (this.getTotalPaidAmount().equals(this.amount)) {
             return ExpenseStatus.COMPLETED.name().toLowerCase();
         } else {
             return ExpenseStatus.PENDING.name().toLowerCase();
@@ -98,16 +77,15 @@ public class Expense extends AuditableAbstractAggregateRoot<Expense> {
     }
 
     public BigDecimal getRemainingAmount() {
-        BigDecimal totalPayed = BigDecimal.ZERO;
-
-        return amount.getAmount().subtract(this.getTotalPaidAmount());
+        return amount.subtract(this.getTotalPaidAmount());
     }
 
     public BigDecimal getTotalPaidAmount() {
         BigDecimal totalPaid = BigDecimal.ZERO;
 
         for (Payment payment : payments) {
-            if (payment.getStatus().equals(PaymentStatus.COMPLETED.name().toLowerCase())) {
+            if (payment.getStatus().equals(PaymentStatus.COMPLETED.name().toUpperCase())
+                && payment.getConfirmed()) {
                 totalPaid = totalPaid.add(payment.getAmount());
             }
         }
