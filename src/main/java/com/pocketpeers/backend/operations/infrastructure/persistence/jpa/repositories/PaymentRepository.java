@@ -13,10 +13,10 @@ import java.util.Optional;
 
 @Repository
 public interface PaymentRepository extends JpaRepository<Payment, Long> {
-    List<Payment> findAllByUserInformationId(Long userInformationId);
+    List<Payment> findAllByUser_Id(Long userId);
     List<Payment> findAllByExpenseId(Long expenseId);
-    List<Payment> findAllByUserInformationIdAndStatus(Long userInformationId, PaymentStatus status);
-    Optional<Payment> findByUserInformationIdAndExpenseId(Long userInformationId, Long expenseId);
+    List<Payment> findAllByUser_IdAndStatus(Long userId, PaymentStatus status);
+    Optional<Payment> findByUser_IdAndExpenseId(Long userId, Long expenseId);
 
     /**
      * Obtiene pagos de gastos donde el usuario es administrador del grupo relacionado.
@@ -27,8 +27,8 @@ public interface PaymentRepository extends JpaRepository<Payment, Long> {
     JOIN p.expense e 
     JOIN e.group g 
     JOIN GroupMember gm ON gm.group.id = g.id 
-    WHERE gm.userInformation.id = :userInformationId 
-      AND gm.role = :role AND p.userInformation.id != :userInformationId
-""")    List<Payment> findIncomingPaymentsByUserInformation(@Param("userInformationId") Long userInformationId, @Param("role") GroupRole role);
+    WHERE gm.user.id = :user 
+      AND gm.role = :role AND p.user.id != :user
+""")    List<Payment> findIncomingPaymentsByUser(@Param("user") Long user, @Param("role") GroupRole role);
 
 }

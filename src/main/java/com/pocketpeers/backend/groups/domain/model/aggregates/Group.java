@@ -4,10 +4,7 @@ import com.pocketpeers.backend.groups.domain.model.commands.CreateGroupCommand;
 import com.pocketpeers.backend.groups.domain.model.entities.GroupMember;
 import com.pocketpeers.backend.groups.domain.model.valueobjects.InvitationToken;
 import com.pocketpeers.backend.shared.domain.model.aggregates.AuditableAbstractAggregateRoot;
-import jakarta.persistence.CascadeType;
-import jakarta.persistence.Entity;
-import jakarta.persistence.OneToMany;
-import jakarta.persistence.Table;
+import jakarta.persistence.*;
 import lombok.Getter;
 import org.apache.logging.log4j.util.Strings;
 
@@ -20,7 +17,6 @@ import java.util.List;
  */
 @Getter
 @Entity
-@Table(name = "pocket_groups")
 public class Group extends AuditableAbstractAggregateRoot<Group> {
 
 
@@ -29,7 +25,7 @@ public class Group extends AuditableAbstractAggregateRoot<Group> {
     private String description;
     private String invitationToken;
 
-    @OneToMany(mappedBy = "group", cascade = CascadeType.ALL, orphanRemoval = true)
+    @OneToMany(mappedBy = "group", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
     private List<GroupMember> members = new ArrayList<>();
 
 

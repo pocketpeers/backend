@@ -4,17 +4,6 @@ import jakarta.persistence.Embeddable;
 
 import java.util.UUID;
 
-/**
- * Record para el token de invitación del grupo
- * Garantiza un valor único y válido para el token
- * Se utiliza para invitar a nuevos miembros al grupo
- * El token se genera automáticamente si no se proporciona
- * El token no puede ser nulo ni vacío
- * El token es inmutable
- * El token es un valor embebido en la entidad Grupo
- *
- * @author Fiorella Jarama Peñaloza
- */
 @Embeddable
 public record InvitationToken(String token) {
 

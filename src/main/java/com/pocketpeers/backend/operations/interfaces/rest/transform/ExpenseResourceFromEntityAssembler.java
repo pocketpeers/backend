@@ -9,7 +9,7 @@ public class ExpenseResourceFromEntityAssembler {
                 expense.getId(),
                 expense.getName(),
                 expense.getAmount(),
-                expense.getUserInformation().getId(),
+                expense.getUser().getId(),
                 expense.getGroup().getId(),
                 expense.getDueDate(),
                 expense.getRemainingAmount(),

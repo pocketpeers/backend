@@ -29,13 +29,13 @@ public class ExpenseQueryServiceImpl implements ExpenseQueryService {
     }
 
     @Override
-    public List<Expense> handle(GetAllExpensesByUserInformationIdQuery query) {
-        return expenseRepository.findByUserInformationId(query.userInformationId());
+    public List<Expense> handle(GetAllExpensesByUserIdQuery query) {
+        return expenseRepository.findByUser_Id(query.userId());
     }
 
     @Override
-    public Optional<Expense> handle(GetExpenseByNameAndUserInformationIdQuery query){
-        return expenseRepository.findByNameAndId(query.expenseName(), query.userInformationId());
+    public Optional<Expense> handle(GetExpenseByNameAndUserIdQuery query){
+        return expenseRepository.findByNameAndUser_Id(query.expenseName(), query.userId());
     }
 
     @Override

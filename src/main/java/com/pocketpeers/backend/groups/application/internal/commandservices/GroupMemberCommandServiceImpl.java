@@ -10,7 +10,7 @@ import com.pocketpeers.backend.groups.domain.services.GroupMemberCommandService;
 import com.pocketpeers.backend.groups.infrastructure.persistence.jpa.repositories.GroupMemberRepository;
 import com.pocketpeers.backend.groups.infrastructure.persistence.jpa.repositories.GroupRepository;
 import com.pocketpeers.backend.operations.domain.exceptions.UserNotFoundException;
-import com.pocketpeers.backend.users.infrastructure.persistence.jpa.repositories.UserInformationRepository;
+import com.pocketpeers.backend.users.infrastructure.persistence.jpa.repositories.UserRepository;
 import org.springframework.stereotype.Service;
 
 import java.util.Optional;
@@ -20,12 +20,12 @@ public class GroupMemberCommandServiceImpl implements GroupMemberCommandService 
 
     private final GroupMemberRepository groupMemberRepository;
     private final GroupRepository groupRepository;
-    private final UserInformationRepository userInformationRepository;
+    private final UserRepository userRepository;
 
-    public GroupMemberCommandServiceImpl(GroupMemberRepository groupMemberRepository, GroupRepository groupRepository, UserInformationRepository userInformationRepository) {
+    public GroupMemberCommandServiceImpl(GroupMemberRepository groupMemberRepository, GroupRepository groupRepository, UserRepository userRepository) {
         this.groupMemberRepository = groupMemberRepository;
         this.groupRepository = groupRepository;
-        this.userInformationRepository = userInformationRepository;
+        this.userRepository = userRepository;
     }
 
 
@@ -36,10 +36,10 @@ public class GroupMemberCommandServiceImpl implements GroupMemberCommandService 
         var group = groupRepository.findById(command.groupId())
                 .orElseThrow(() -> new GroupNotFoundException(command.groupId()));
 
-        var user = userInformationRepository.findById(command.userId())
+        var user = userRepository.findById(command.userId())
                 .orElseThrow(() -> new UserNotFoundException(command.userId()));
 
-        if (groupMemberRepository.existsByGroupAndUserInformation(group, user)) {
+        if (groupMemberRepository.existsGroupMemberByGroupAndUser(group, user)) {
             throw new IllegalArgumentException("User is already a member of the group");
         }
 
@@ -58,7 +58,7 @@ public class GroupMemberCommandServiceImpl implements GroupMemberCommandService 
                 .orElseThrow(() -> new GroupNotFoundException(command.groupId()));
 
 
-        var memberToRemove = groupMemberRepository.findByGroupIdAndUserInformationId(group.getId(), command.userId())
+        var memberToRemove = groupMemberRepository.findByGroupIdAndUser_Id(group.getId(), command.userId())
                 .orElseThrow(() -> new RuntimeException("Member not found in group"));
 
         try {
@@ -77,10 +77,10 @@ public class GroupMemberCommandServiceImpl implements GroupMemberCommandService 
             throw new IllegalArgumentException("Invalid invitation token");
         }
 
-        var user = userInformationRepository.findById(command.userId())
+        var user = userRepository.findById(command.userId())
                 .orElseThrow(() -> new UserNotFoundException(command.userId()));
 
-        if (groupMemberRepository.existsByGroupAndUserInformation(group, user)) {
+        if (groupMemberRepository.existsGroupMemberByGroupAndUser(group, user)) {
             throw new IllegalArgumentException("User is already a member of the group");
         }
 

@@ -7,7 +7,7 @@ import com.pocketpeers.backend.groups.domain.model.valueobjects.GroupRole;
 import com.pocketpeers.backend.groups.domain.services.GroupCommandService;
 import com.pocketpeers.backend.groups.infrastructure.persistence.jpa.repositories.GroupMemberRepository;
 import com.pocketpeers.backend.groups.infrastructure.persistence.jpa.repositories.GroupRepository;
-import com.pocketpeers.backend.users.infrastructure.persistence.jpa.repositories.UserInformationRepository;
+import com.pocketpeers.backend.users.infrastructure.persistence.jpa.repositories.UserRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -18,21 +18,21 @@ public class GroupCommandServiceImpl implements GroupCommandService {
 
     private final GroupRepository groupRepository;
     private final GroupMemberRepository groupMemberRepository;
-    private final UserInformationRepository userInformationRepository;
+    private final UserRepository userRepository;
 
     public GroupCommandServiceImpl(GroupRepository groupRepository,
                                    GroupMemberRepository groupMemberRepository,
-                                   UserInformationRepository userInformationRepository) {
+                                   UserRepository userRepository) {
         this.groupRepository = groupRepository;
         this.groupMemberRepository = groupMemberRepository;
-        this.userInformationRepository = userInformationRepository;
+        this.userRepository = userRepository;
     }
 
 
     @Override
     public Long handle(CreateGroupCommand command) {
 
-        var userInformation = userInformationRepository.findById(command.adminId())
+        var user = userRepository.findById(command.adminId())
                 .orElseThrow(() -> new RuntimeException("User not found"));
 
         if (groupRepository.existsByName(command.name())) {
@@ -40,7 +40,7 @@ public class GroupCommandServiceImpl implements GroupCommandService {
         }
 
         var group = new Group(command);
-        var groupMember = new GroupMember(group, userInformation, GroupRole.ADMIN);
+        var groupMember = new GroupMember(group, user, GroupRole.ADMIN);
 
         try {
          groupRepository.save(group);

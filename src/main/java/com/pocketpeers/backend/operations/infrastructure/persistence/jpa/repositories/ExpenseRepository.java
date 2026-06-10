@@ -2,7 +2,6 @@ package com.pocketpeers.backend.operations.infrastructure.persistence.jpa.reposi
 
 import com.pocketpeers.backend.operations.domain.model.aggregates.Expense;
 import com.pocketpeers.backend.operations.domain.model.valueobjects.DueDate;
-import com.pocketpeers.backend.operations.domain.model.valueobjects.ExpenseName;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 
@@ -11,9 +10,9 @@ import java.util.Optional;
 
 @Repository
 public interface ExpenseRepository extends JpaRepository<Expense, Long> {
-    Optional<Expense> findByName(ExpenseName name);
-    Optional<Expense> findByNameAndId(ExpenseName name, Long userId);
-    List<Expense> findByUserInformationId(Long userInformationId);
+    Optional<Expense> findByName(String name);
+    Optional<Expense> findByNameAndUser_Id(String name, Long userId);
+    List<Expense> findByUser_Id(Long userId);
     List<Expense> findByGroupId(Long groupId);
     List<Expense> findAllByDueDate(DueDate dueDate);
 }
