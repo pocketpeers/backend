@@ -12,6 +12,9 @@ import com.pocketpeers.backend.operations.domain.model.events.PaymentUpdatedEven
 import com.pocketpeers.backend.operations.domain.services.PaymentCommandService;
 import com.pocketpeers.backend.operations.infrastructure.persistence.jpa.repositories.ExpenseRepository;
 import com.pocketpeers.backend.operations.infrastructure.persistence.jpa.repositories.PaymentRepository;
+import com.pocketpeers.backend.pbl.domain.model.commands.RegisterReputationEventCommand;
+import com.pocketpeers.backend.pbl.domain.model.valueobjects.ReputationEventType;
+import com.pocketpeers.backend.pbl.domain.services.PblCommandService;
 import com.pocketpeers.backend.users.domain.model.aggregates.User;
 import com.pocketpeers.backend.users.infrastructure.persistence.jpa.repositories.UserRepository;
 import jakarta.transaction.Transactional;
@@ -26,13 +29,16 @@ public class PaymentCommandServiceImpl implements PaymentCommandService {
     private final ExpenseRepository expenseRepository;
     private final UserRepository userRepository;
     private final ApplicationEventPublisher applicationEventPublisher;
+    private final PblCommandService pblCommandService;
 
     public PaymentCommandServiceImpl(PaymentRepository paymentRepository, ExpenseRepository expenseRepository,
-                                     UserRepository userRepository, ApplicationEventPublisher applicationEventPublisher) {
+                                     UserRepository userRepository, ApplicationEventPublisher applicationEventPublisher,
+                                     PblCommandService pblCommandService) {
         this.paymentRepository = paymentRepository;
         this.expenseRepository = expenseRepository;
         this.userRepository = userRepository;
         this.applicationEventPublisher = applicationEventPublisher;
+        this.pblCommandService = pblCommandService;
     }
 
     @Override
@@ -56,6 +62,18 @@ public class PaymentCommandServiceImpl implements PaymentCommandService {
             PaymentEvidence evidence = new PaymentEvidence(payment, command.photo());
             payment.addEvidence(evidence);
             paymentRepository.save(payment);
+            var type = payment.getStatus().equals("PARTIAL")
+                    ? ReputationEventType.PARTIAL_PAYMENT
+                    : payment.getExpense().getDueDate().isBefore(java.time.LocalDate.now())
+                    ? ReputationEventType.LATE_PAYMENT
+                    : ReputationEventType.ON_TIME_PAYMENT;
+            pblCommandService.handle(new RegisterReputationEventCommand(
+                    payment.getUser().getId(),
+                    payment.getExpense().getGroup().getId(),
+                    payment.getId(),
+                    type,
+                    "Payment registered from operations module"
+            ));
             applicationEventPublisher.publishEvent(new PaymentUpdatedEvent(payment));
             return payment.getId();
         }).orElseThrow(() -> new RuntimeException("Payment not found"));

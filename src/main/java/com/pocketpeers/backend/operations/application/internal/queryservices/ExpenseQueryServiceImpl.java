@@ -39,6 +39,14 @@ public class ExpenseQueryServiceImpl implements ExpenseQueryService {
     }
 
     @Override
+    public List<Expense> handle(SearchExpensesByNameQuery query) {
+        if (query.name() == null || query.name().trim().isEmpty()) {
+            return List.of();
+        }
+        return expenseRepository.findAllByNameIgnoreCase(query.name().trim());
+    }
+
+    @Override
     public List<Expense> handle(GetAllExpensesByGroupIdQuery query){
         return expenseRepository.findByGroupId(query.groupId());
     }

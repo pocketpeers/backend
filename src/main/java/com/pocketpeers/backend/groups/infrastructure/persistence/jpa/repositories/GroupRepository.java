@@ -11,6 +11,7 @@ import java.util.Optional;
 @Repository
 public interface GroupRepository extends JpaRepository<Group, Long> {
     Optional<Group> findByName(String name);
+    List<Group> findAllByNameContainingIgnoreCase(String name);
     boolean existsByName(String name);
     boolean existsByNameAndIdIsNot(String name, Long id);
 

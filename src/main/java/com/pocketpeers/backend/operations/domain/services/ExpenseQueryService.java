@@ -11,6 +11,7 @@ public interface ExpenseQueryService {
     Optional<Expense> handle(GetExpenseByIdQuery query);
     List<Expense> handle(GetAllExpensesByUserIdQuery query);
     Optional<Expense> handle(GetExpenseByNameAndUserIdQuery query);
+    List<Expense> handle(SearchExpensesByNameQuery query);
     List<Expense> handle(GetAllExpensesByGroupIdQuery query);
     List<Expense> handle(GetAllExpensesByDueDate query);
 }

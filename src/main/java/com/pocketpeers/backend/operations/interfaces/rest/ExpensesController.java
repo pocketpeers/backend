@@ -5,6 +5,7 @@ import com.pocketpeers.backend.operations.domain.model.queries.GetAllExpensesByG
 import com.pocketpeers.backend.operations.domain.model.queries.GetAllExpensesByUserIdQuery;
 import com.pocketpeers.backend.operations.domain.model.queries.GetAllExpensesQuery;
 import com.pocketpeers.backend.operations.domain.model.queries.GetExpenseByIdQuery;
+import com.pocketpeers.backend.operations.domain.model.queries.SearchExpensesByNameQuery;
 import com.pocketpeers.backend.operations.domain.services.ExpenseCommandService;
 import com.pocketpeers.backend.operations.domain.services.ExpenseQueryService;
 import com.pocketpeers.backend.operations.interfaces.rest.resources.CreateExpenseResource;
@@ -71,6 +72,13 @@ public class ExpensesController {
         var expenses = expenseQueryService.handle(getAllExpensesQuery);
         var expensesResources = expenses.stream().map(ExpenseResourceFromEntityAssembler::toResourceFromEntity).collect(Collectors.toList());
         return ResponseEntity.ok(expensesResources);
+    }
+
+    @GetMapping("/search")
+    public ResponseEntity<List<ExpenseResource>> searchExpensesByName(@RequestParam String name) {
+        var expenses = expenseQueryService.handle(new SearchExpensesByNameQuery(name));
+        var expenseResources = expenses.stream().map(ExpenseResourceFromEntityAssembler::toResourceFromEntity).toList();
+        return ResponseEntity.ok(expenseResources);
     }
 
     @PutMapping("/{expenseId}")
