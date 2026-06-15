@@ -9,6 +9,7 @@ import com.pocketpeers.backend.operations.domain.model.commands.CreatePaymentCom
 import com.pocketpeers.backend.operations.domain.model.entities.PaymentEvidence;
 import com.pocketpeers.backend.operations.domain.model.events.PaymentCreatedEvent;
 import com.pocketpeers.backend.operations.domain.model.events.PaymentUpdatedEvent;
+import com.pocketpeers.backend.operations.domain.model.valueobjects.PaymentStatus;
 import com.pocketpeers.backend.operations.domain.services.PaymentCommandService;
 import com.pocketpeers.backend.operations.infrastructure.persistence.jpa.repositories.ExpenseRepository;
 import com.pocketpeers.backend.operations.infrastructure.persistence.jpa.repositories.PaymentRepository;
@@ -58,8 +59,8 @@ public class PaymentCommandServiceImpl implements PaymentCommandService {
     @Transactional
     public Long handle(MakePaymentCommand command){
         return paymentRepository.findById(command.paymentId()).map(payment -> {
-            if (payment.getConfirmed()) {
-                throw new RuntimeException("Confirmed payments cannot be modified");
+            if (payment.getConfirmed() && payment.getStatus().equals(PaymentStatus.COMPLETED.name())) {
+                throw new RuntimeException("Completed confirmed payments cannot be modified");
             }
             payment.pay(command.amount());
             PaymentEvidence evidence = new PaymentEvidence(payment, command.photo());

@@ -84,9 +84,8 @@ public class Expense extends AuditableAbstractAggregateRoot<Expense> {
         BigDecimal totalPaid = BigDecimal.ZERO;
 
         for (Payment payment : payments) {
-            if (payment.getStatus().equals(PaymentStatus.COMPLETED.name().toUpperCase())
-                && payment.getConfirmed()) {
-                totalPaid = totalPaid.add(payment.getAmount());
+            if (payment.getConfirmed()) {
+                totalPaid = totalPaid.add(payment.getAmountPaid());
             }
         }
         return totalPaid;

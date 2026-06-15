@@ -20,7 +20,7 @@ public class GroupMemberQueryServiceImpl implements GroupMemberQueryService {
 
     @Override
     public List<GroupMember> handle(GetAllMembersInGroupQuery query) {
-        return groupMemberRepository.findAllByGroupId(query.groupId());
+        return groupMemberRepository.findAllMembersByGroupId(query.groupId());
     }
 
     @Override

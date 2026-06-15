@@ -77,10 +77,6 @@ public class GroupMemberController {
         var getAllMembersInGroupQuery = new GetAllMembersInGroupQuery(groupId);
         var members = groupMemberQueryService.handle(getAllMembersInGroupQuery);
 
-        if (members.isEmpty()) {
-            return ResponseEntity.noContent().build();
-        }
-
         var memberResources = members.stream()
                 .map(GroupMemberResourceFromEntityAssembler::fromEntityToResource)
                 .collect(Collectors.toList());
