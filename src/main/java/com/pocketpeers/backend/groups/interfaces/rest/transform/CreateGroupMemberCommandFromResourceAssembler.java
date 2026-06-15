@@ -5,6 +5,14 @@ import com.pocketpeers.backend.groups.interfaces.rest.resources.GroupMemberResou
 
 public class CreateGroupMemberCommandFromResourceAssembler {
     public static GroupMemberResource fromCommandToResource(GroupMember resource) {
-        return new GroupMemberResource(resource.getGroup().getId(), resource.getUser().getId(),resource.getUser().getUserInformation().getFullName(), resource.getRole(), resource.getJoinedAt());
+        var userInformation = resource.getUser().getUserInformation();
+        return new GroupMemberResource(
+                resource.getGroup().getId(),
+                resource.getUser().getId(),
+                userInformation.getFullName(),
+                userInformation.getPhoto(),
+                resource.getRole(),
+                resource.getJoinedAt()
+        );
     }
 }

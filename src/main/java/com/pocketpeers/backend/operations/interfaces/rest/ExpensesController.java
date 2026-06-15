@@ -1,25 +1,37 @@
 package com.pocketpeers.backend.operations.interfaces.rest;
 
+import com.pocketpeers.backend.operations.domain.model.commands.CreateExpenseCommand;
 import com.pocketpeers.backend.operations.domain.model.commands.DeleteExpenseCommand;
+import com.pocketpeers.backend.operations.domain.model.commands.CreatePaymentCommand;
 import com.pocketpeers.backend.operations.domain.model.queries.GetAllExpensesByGroupIdQuery;
 import com.pocketpeers.backend.operations.domain.model.queries.GetAllExpensesByUserIdQuery;
 import com.pocketpeers.backend.operations.domain.model.queries.GetAllExpensesQuery;
 import com.pocketpeers.backend.operations.domain.model.queries.GetExpenseByIdQuery;
+import com.pocketpeers.backend.operations.domain.model.queries.GetPaymentByIdQuery;
 import com.pocketpeers.backend.operations.domain.model.queries.SearchExpensesByNameQuery;
 import com.pocketpeers.backend.operations.domain.services.ExpenseCommandService;
 import com.pocketpeers.backend.operations.domain.services.ExpenseQueryService;
+import com.pocketpeers.backend.operations.domain.services.PaymentCommandService;
+import com.pocketpeers.backend.operations.domain.services.PaymentQueryService;
 import com.pocketpeers.backend.operations.interfaces.rest.resources.CreateExpenseResource;
+import com.pocketpeers.backend.operations.interfaces.rest.resources.CreateExpenseWithPaymentsResource;
 import com.pocketpeers.backend.operations.interfaces.rest.resources.ExpenseResource;
+import com.pocketpeers.backend.operations.interfaces.rest.resources.ExpenseWithPaymentsResource;
+import com.pocketpeers.backend.operations.interfaces.rest.resources.PaymentResource;
 import com.pocketpeers.backend.operations.interfaces.rest.resources.UpdateExpenseResource;
 import com.pocketpeers.backend.operations.interfaces.rest.transform.CreateExpenseCommandFromResourceAssembler;
 import com.pocketpeers.backend.operations.interfaces.rest.transform.ExpenseResourceFromEntityAssembler;
+import com.pocketpeers.backend.operations.interfaces.rest.transform.PaymentResourceFromEntityAssembler;
 import com.pocketpeers.backend.operations.interfaces.rest.transform.UpdateExpenseCommandFromResourceAssembler;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.transaction.Transactional;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.math.BigDecimal;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -31,10 +43,15 @@ public class ExpensesController {
 
     private final ExpenseQueryService expenseQueryService;
     private final ExpenseCommandService expenseCommandService;
+    private final PaymentCommandService paymentCommandService;
+    private final PaymentQueryService paymentQueryService;
 
-    public ExpensesController(ExpenseQueryService expenseQueryService, ExpenseCommandService expenseCommandService) {
+    public ExpensesController(ExpenseQueryService expenseQueryService, ExpenseCommandService expenseCommandService,
+                              PaymentCommandService paymentCommandService, PaymentQueryService paymentQueryService) {
         this.expenseQueryService = expenseQueryService;
         this.expenseCommandService = expenseCommandService;
+        this.paymentCommandService = paymentCommandService;
+        this.paymentQueryService = paymentQueryService;
     }
 
     @PostMapping
@@ -47,6 +64,50 @@ public class ExpensesController {
         if (expenseId.isEmpty()) return ResponseEntity.badRequest().build();
         var expenseResource = ExpenseResourceFromEntityAssembler.toResourceFromEntity(expenseId.get());
         return new ResponseEntity<>(expenseResource, HttpStatus.CREATED);
+    }
+
+    @PostMapping("/with-payments")
+    @Transactional
+    public ResponseEntity<ExpenseWithPaymentsResource> createExpenseWithPayments(@RequestBody CreateExpenseWithPaymentsResource resource) {
+        if (resource.payments() == null || resource.payments().isEmpty()) {
+            throw new IllegalArgumentException("At least one payment is required");
+        }
+        var paymentsTotal = resource.payments().stream()
+                .map(payment -> payment.amount() == null ? BigDecimal.ZERO : payment.amount())
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        if (paymentsTotal.compareTo(resource.amount()) != 0) {
+            throw new IllegalArgumentException("Payment amounts must match the expense amount");
+        }
+
+        var createExpenseCommand = new CreateExpenseCommand(
+                resource.name(),
+                resource.amount(),
+                resource.userId(),
+                resource.groupId(),
+                resource.dueDate()
+        );
+        var expense = expenseCommandService.handle(createExpenseCommand)
+                .orElseThrow(() -> new IllegalArgumentException("Expense could not be created"));
+
+        var paymentResources = new ArrayList<PaymentResource>();
+        for (var paymentResource : resource.payments()) {
+            var command = new CreatePaymentCommand(
+                    paymentResource.description(),
+                    paymentResource.amount(),
+                    paymentResource.userId(),
+                    expense.getId()
+            );
+            var paymentId = paymentCommandService.handle(command);
+            var payment = paymentQueryService.handle(new GetPaymentByIdQuery(paymentId))
+                    .orElseThrow(() -> new IllegalArgumentException("Payment could not be created"));
+            paymentResources.add(PaymentResourceFromEntityAssembler.toResourceFromEntity(payment));
+        }
+
+        var response = new ExpenseWithPaymentsResource(
+                ExpenseResourceFromEntityAssembler.toResourceFromEntity(expense),
+                paymentResources
+        );
+        return new ResponseEntity<>(response, HttpStatus.CREATED);
     }
 
     @GetMapping("/{expenseId}")

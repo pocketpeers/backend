@@ -21,7 +21,7 @@ import jakarta.transaction.Transactional;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 
-import java.util.Optional;
+import java.time.LocalDate;
 
 @Service
 public class PaymentCommandServiceImpl implements PaymentCommandService {
@@ -57,32 +57,23 @@ public class PaymentCommandServiceImpl implements PaymentCommandService {
     @Override
     @Transactional
     public Long handle(MakePaymentCommand command){
-        paymentRepository.findById(command.paymentId()).map(payment -> {
+        return paymentRepository.findById(command.paymentId()).map(payment -> {
+            if (payment.getConfirmed()) {
+                throw new RuntimeException("Confirmed payments cannot be modified");
+            }
             payment.pay(command.amount());
             PaymentEvidence evidence = new PaymentEvidence(payment, command.photo());
             payment.addEvidence(evidence);
             paymentRepository.save(payment);
-            var type = payment.getStatus().equals("PARTIAL")
-                    ? ReputationEventType.PARTIAL_PAYMENT
-                    : payment.getExpense().getDueDate().isBefore(java.time.LocalDate.now())
-                    ? ReputationEventType.LATE_PAYMENT
-                    : ReputationEventType.ON_TIME_PAYMENT;
-            pblCommandService.handle(new RegisterReputationEventCommand(
-                    payment.getUser().getId(),
-                    payment.getExpense().getGroup().getId(),
-                    payment.getId(),
-                    type,
-                    "Payment registered from operations module"
-            ));
             applicationEventPublisher.publishEvent(new PaymentUpdatedEvent(payment));
             return payment.getId();
         }).orElseThrow(() -> new RuntimeException("Payment not found"));
-        return null;
     }
 
     @Override
+    @Transactional
     public Long handle(ConfirmPaymentCommand command) {
-        paymentRepository.findById(command.paymentId()).map(payment -> {
+        return paymentRepository.findById(command.paymentId()).map(payment -> {
             Expense expense = payment.getExpense();
             if (!expense.getUser().getUsername().equals(command.username())) {
                 throw new RuntimeException("Only the creator of the expense can confirm the payment");
@@ -90,11 +81,29 @@ public class PaymentCommandServiceImpl implements PaymentCommandService {
             if (payment.getConfirmed()) {
                 throw new RuntimeException("Payment is already confirmed");
             }
+            if (payment.getStatus().equals("PENDING")) {
+                throw new RuntimeException("Only registered payments can be confirmed");
+            }
             payment.confirmPayment();
             paymentRepository.save(payment);
+            registerReputationEventForConfirmedPayment(payment);
             applicationEventPublisher.publishEvent(new PaymentUpdatedEvent(payment));
             return payment.getId();
         }).orElseThrow(() -> new RuntimeException("Payment not found"));
-        return null;
+    }
+
+    private void registerReputationEventForConfirmedPayment(Payment payment) {
+        var type = payment.getStatus().equals("PARTIAL")
+                ? ReputationEventType.PARTIAL_PAYMENT
+                : payment.getExpense().getDueDate().isBefore(LocalDate.now())
+                ? ReputationEventType.LATE_PAYMENT
+                : ReputationEventType.ON_TIME_PAYMENT;
+        pblCommandService.handle(new RegisterReputationEventCommand(
+                payment.getUser().getId(),
+                payment.getExpense().getGroup().getId(),
+                payment.getId(),
+                type,
+                "Payment confirmed by expense creator"
+        ));
     }
 }

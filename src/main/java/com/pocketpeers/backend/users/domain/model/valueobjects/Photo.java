@@ -5,14 +5,8 @@ import jakarta.validation.constraints.NotBlank;
 
 @Embeddable
 public record Photo(
-        @NotBlank(message = "Photo cannot be null or blank")
         String photo
 ) {
-    public Photo {
-        if (photo == null || photo.isBlank()) {
-            throw new IllegalArgumentException("Photo cannot be null or blank");
-        }
-    }
 
     /**
      * Factory method to create an instance with a default photo if necessary.

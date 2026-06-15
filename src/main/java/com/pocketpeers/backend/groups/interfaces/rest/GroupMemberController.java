@@ -101,4 +101,17 @@ public class GroupMemberController {
         return ResponseEntity.status(HttpStatus.CREATED).body(memberResource);
     }
 
+    @PostMapping("/join")
+    public ResponseEntity<GroupMemberResource> joinGroupWithToken(
+            @RequestBody JoinGroupWithTokenResource joinGroupWithTokenResource) {
+
+        var command = new JoinGroupWithTokenCommand(null, joinGroupWithTokenResource.token(), joinGroupWithTokenResource.userId());
+        var newMember = groupMemberCommandService.handle(command);
+        if (newMember.isEmpty()) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(null);
+        }
+        var memberResource = GroupMemberResourceFromEntityAssembler.fromEntityToResource(newMember.get());
+        return ResponseEntity.status(HttpStatus.CREATED).body(memberResource);
+    }
+
 }

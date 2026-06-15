@@ -7,6 +7,7 @@ public record PaymentResource(Long id,
                               BigDecimal amount,
                               BigDecimal amountPaid,
                               String status,
+                              Boolean confirmed,
                               Long userId,
                               Long expenseId
 ) {
