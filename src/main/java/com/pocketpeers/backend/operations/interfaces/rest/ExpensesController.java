@@ -23,11 +23,14 @@ import com.pocketpeers.backend.operations.interfaces.rest.transform.CreateExpens
 import com.pocketpeers.backend.operations.interfaces.rest.transform.ExpenseResourceFromEntityAssembler;
 import com.pocketpeers.backend.operations.interfaces.rest.transform.PaymentResourceFromEntityAssembler;
 import com.pocketpeers.backend.operations.interfaces.rest.transform.UpdateExpenseCommandFromResourceAssembler;
+import com.pocketpeers.backend.users.domain.model.aggregates.User;
+import com.pocketpeers.backend.users.infrastructure.persistence.jpa.repositories.UserRepository;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.transaction.Transactional;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
 import java.math.BigDecimal;
@@ -45,18 +48,22 @@ public class ExpensesController {
     private final ExpenseCommandService expenseCommandService;
     private final PaymentCommandService paymentCommandService;
     private final PaymentQueryService paymentQueryService;
+    private final UserRepository userRepository;
 
     public ExpensesController(ExpenseQueryService expenseQueryService, ExpenseCommandService expenseCommandService,
-                              PaymentCommandService paymentCommandService, PaymentQueryService paymentQueryService) {
+                              PaymentCommandService paymentCommandService, PaymentQueryService paymentQueryService,
+                              UserRepository userRepository) {
         this.expenseQueryService = expenseQueryService;
         this.expenseCommandService = expenseCommandService;
         this.paymentCommandService = paymentCommandService;
         this.paymentQueryService = paymentQueryService;
+        this.userRepository = userRepository;
     }
 
     @PostMapping
-    public ResponseEntity<ExpenseResource> createExpense(@RequestBody CreateExpenseResource resource) {
-        var createExpenseCommand = CreateExpenseCommandFromResourceAssembler.toCommandFromResource(resource);
+    public ResponseEntity<ExpenseResource> createExpense(@RequestBody CreateExpenseResource resource, Authentication authentication) {
+        var user = authenticatedUser(authentication);
+        var createExpenseCommand = CreateExpenseCommandFromResourceAssembler.toCommandFromResource(resource, user.getId());
         var expenseId = expenseCommandService.handle(createExpenseCommand);
         //var getExpenseByNameAndUserId = new GetExpenseByNameAndUserInformationIdQuery(new ExpenseName(resource.name()), resource.requesterId());
         //var expense = expenseQueryService.handle(getExpenseByNameAndUserId);
@@ -68,7 +75,8 @@ public class ExpensesController {
 
     @PostMapping("/with-payments")
     @Transactional
-    public ResponseEntity<ExpenseWithPaymentsResource> createExpenseWithPayments(@RequestBody CreateExpenseWithPaymentsResource resource) {
+    public ResponseEntity<ExpenseWithPaymentsResource> createExpenseWithPayments(@RequestBody CreateExpenseWithPaymentsResource resource, Authentication authentication) {
+        var user = authenticatedUser(authentication);
         if (resource.payments() == null || resource.payments().isEmpty()) {
             throw new IllegalArgumentException("At least one payment is required");
         }
@@ -82,7 +90,7 @@ public class ExpensesController {
         var createExpenseCommand = new CreateExpenseCommand(
                 resource.name(),
                 resource.amount(),
-                resource.userId(),
+                user.getId(),
                 resource.groupId(),
                 resource.dueDate()
         );
@@ -108,6 +116,14 @@ public class ExpensesController {
                 paymentResources
         );
         return new ResponseEntity<>(response, HttpStatus.CREATED);
+    }
+
+    private User authenticatedUser(Authentication authentication) {
+        if (authentication == null || authentication.getName() == null) {
+            throw new IllegalArgumentException("Authenticated user is required");
+        }
+        return userRepository.findByUsername(authentication.getName())
+                .orElseThrow(() -> new IllegalArgumentException("Authenticated user not found"));
     }
 
     @GetMapping("/{expenseId}")

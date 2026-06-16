@@ -3,6 +3,7 @@ package com.pocketpeers.backend.operations.infrastructure.persistence.jpa.reposi
 import com.pocketpeers.backend.groups.domain.model.valueobjects.GroupRole;
 import com.pocketpeers.backend.operations.domain.model.aggregates.Payment;
 import com.pocketpeers.backend.operations.domain.model.valueobjects.PaymentStatus;
+import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -13,6 +14,9 @@ import java.util.Optional;
 
 @Repository
 public interface PaymentRepository extends JpaRepository<Payment, Long> {
+    @EntityGraph(attributePaths = {"evidences", "expense", "expense.group"})
+    Optional<Payment> findById(Long id);
+
     List<Payment> findAllByUser_Id(Long userId);
     List<Payment> findAllByExpenseId(Long expenseId);
     List<Payment> findAllByUser_IdAndStatus(Long userId, PaymentStatus status);

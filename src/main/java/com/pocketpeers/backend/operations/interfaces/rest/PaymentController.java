@@ -1,5 +1,8 @@
 package com.pocketpeers.backend.operations.interfaces.rest;
 
+import com.pocketpeers.backend.groups.domain.model.valueobjects.GroupRole;
+import com.pocketpeers.backend.groups.infrastructure.persistence.jpa.repositories.GroupMemberRepository;
+import com.pocketpeers.backend.operations.domain.model.aggregates.Payment;
 import com.pocketpeers.backend.operations.domain.model.commands.ConfirmPaymentCommand;
 import com.pocketpeers.backend.operations.domain.model.queries.*;
 import com.pocketpeers.backend.operations.domain.model.valueobjects.PaymentStatus;
@@ -12,6 +15,7 @@ import com.pocketpeers.backend.operations.interfaces.rest.transform.MakePaymentC
 import com.pocketpeers.backend.operations.interfaces.rest.transform.CreatePaymentCommandFromResourceAssembler;
 import com.pocketpeers.backend.operations.interfaces.rest.transform.PaymentResourceFromEntityAssembler;
 import com.pocketpeers.backend.shared.interfaces.rest.resources.MessageResource;
+import com.pocketpeers.backend.users.infrastructure.persistence.jpa.repositories.UserRepository;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -28,10 +32,15 @@ import java.util.List;
 public class PaymentController {
     private final PaymentQueryService paymentQueryService;
     private final PaymentCommandService paymentCommandService;
+    private final UserRepository userRepository;
+    private final GroupMemberRepository groupMemberRepository;
 
-    public PaymentController(PaymentQueryService paymentQueryService, PaymentCommandService paymentCommandService) {
+    public PaymentController(PaymentQueryService paymentQueryService, PaymentCommandService paymentCommandService,
+                             UserRepository userRepository, GroupMemberRepository groupMemberRepository) {
         this.paymentQueryService = paymentQueryService;
         this.paymentCommandService = paymentCommandService;
+        this.userRepository = userRepository;
+        this.groupMemberRepository = groupMemberRepository;
     }
 
     @PostMapping
@@ -84,10 +93,13 @@ public class PaymentController {
     }
 
     @GetMapping("/{paymentId}")
-    public ResponseEntity<PaymentResource> getPaymentById(@PathVariable Long paymentId) {
+    public ResponseEntity<PaymentResource> getPaymentById(@PathVariable Long paymentId, Authentication authentication) {
         var getPaymentByIdQuery = new GetPaymentByIdQuery(paymentId);
         var payment = paymentQueryService.handle(getPaymentByIdQuery);
-        var paymentResource = PaymentResourceFromEntityAssembler.toResourceFromEntity(payment.get());
+        var paymentResource = PaymentResourceFromEntityAssembler.toResourceFromEntity(
+                payment.get(),
+                canViewEvidence(payment.get(), authentication)
+        );
         return ResponseEntity.ok(paymentResource);
     }
 
@@ -105,5 +117,16 @@ public class PaymentController {
         var payments = paymentQueryService.handle(getIncomingPaymentsByUserIdQuery);
         var paymentResources = payments.stream().map(PaymentResourceFromEntityAssembler::toResourceFromEntity).toList();
         return ResponseEntity.ok(paymentResources);
+    }
+
+    private boolean canViewEvidence(Payment payment, Authentication authentication) {
+        if (authentication == null || authentication.getName() == null) return false;
+        return userRepository.findByUsername(authentication.getName())
+                .flatMap(user -> groupMemberRepository.findByGroupIdAndUser_Id(
+                        payment.getExpense().getGroup().getId(),
+                        user.getId()
+                ))
+                .map(member -> member.getRole() == GroupRole.ADMIN)
+                .orElse(false);
     }
 }

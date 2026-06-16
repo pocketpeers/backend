@@ -16,6 +16,7 @@ import com.pocketpeers.backend.operations.infrastructure.persistence.jpa.reposit
 import com.pocketpeers.backend.pbl.domain.model.commands.RegisterReputationEventCommand;
 import com.pocketpeers.backend.pbl.domain.model.valueobjects.ReputationEventType;
 import com.pocketpeers.backend.pbl.domain.services.PblCommandService;
+import com.pocketpeers.backend.pbl.infrastructure.persistence.jpa.repositories.ReputationEventRepository;
 import com.pocketpeers.backend.users.domain.model.aggregates.User;
 import com.pocketpeers.backend.users.infrastructure.persistence.jpa.repositories.UserRepository;
 import jakarta.transaction.Transactional;
@@ -31,15 +32,18 @@ public class PaymentCommandServiceImpl implements PaymentCommandService {
     private final UserRepository userRepository;
     private final ApplicationEventPublisher applicationEventPublisher;
     private final PblCommandService pblCommandService;
+    private final ReputationEventRepository reputationEventRepository;
 
     public PaymentCommandServiceImpl(PaymentRepository paymentRepository, ExpenseRepository expenseRepository,
                                      UserRepository userRepository, ApplicationEventPublisher applicationEventPublisher,
-                                     PblCommandService pblCommandService) {
+                                     PblCommandService pblCommandService,
+                                     ReputationEventRepository reputationEventRepository) {
         this.paymentRepository = paymentRepository;
         this.expenseRepository = expenseRepository;
         this.userRepository = userRepository;
         this.applicationEventPublisher = applicationEventPublisher;
         this.pblCommandService = pblCommandService;
+        this.reputationEventRepository = reputationEventRepository;
     }
 
     @Override
@@ -94,17 +98,46 @@ public class PaymentCommandServiceImpl implements PaymentCommandService {
     }
 
     private void registerReputationEventForConfirmedPayment(Payment payment) {
-        var type = payment.getStatus().equals("PARTIAL")
-                ? ReputationEventType.PARTIAL_PAYMENT
-                : payment.getExpense().getDueDate().isBefore(LocalDate.now())
-                ? ReputationEventType.LATE_PAYMENT
-                : ReputationEventType.ON_TIME_PAYMENT;
+        var type = reputationEventTypeFor(payment);
+        if (shouldSkipReputationEvent(payment, type)) {
+            return;
+        }
+
         pblCommandService.handle(new RegisterReputationEventCommand(
                 payment.getUser().getId(),
                 payment.getExpense().getGroup().getId(),
                 payment.getId(),
                 type,
-                "Payment confirmed by expense creator"
+                descriptionFor(type)
         ));
+    }
+
+    private ReputationEventType reputationEventTypeFor(Payment payment) {
+        if (payment.getStatus().equals("PARTIAL")) {
+            return ReputationEventType.PARTIAL_PAYMENT;
+        }
+        if (payment.getExpense().getDueDate().isBefore(LocalDate.now())) {
+            return ReputationEventType.LATE_PAYMENT;
+        }
+        return ReputationEventType.ON_TIME_PAYMENT;
+    }
+
+    private boolean shouldSkipReputationEvent(Payment payment, ReputationEventType type) {
+        if (type == ReputationEventType.PARTIAL_PAYMENT) {
+            return reputationEventRepository.existsByPaymentIdAndType(payment.getId(), ReputationEventType.PARTIAL_PAYMENT);
+        }
+        if (type == ReputationEventType.ON_TIME_PAYMENT) {
+            return reputationEventRepository.existsByPaymentId(payment.getId());
+        }
+        return reputationEventRepository.existsByPaymentIdAndType(payment.getId(), type);
+    }
+
+    private String descriptionFor(ReputationEventType type) {
+        return switch (type) {
+            case PARTIAL_PAYMENT -> "Partial payment confirmed by expense creator";
+            case ON_TIME_PAYMENT -> "Full payment confirmed in one installment";
+            case LATE_PAYMENT -> "Late full payment confirmed in one installment";
+            case MANUAL_ADJUSTMENT -> "Manual reputation adjustment";
+        };
     }
 }

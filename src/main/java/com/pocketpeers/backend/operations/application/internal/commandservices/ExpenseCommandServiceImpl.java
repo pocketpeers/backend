@@ -1,6 +1,8 @@
 package com.pocketpeers.backend.operations.application.internal.commandservices;
 
 import com.pocketpeers.backend.groups.domain.model.aggregates.Group;
+import com.pocketpeers.backend.groups.domain.model.valueobjects.GroupRole;
+import com.pocketpeers.backend.groups.infrastructure.persistence.jpa.repositories.GroupMemberRepository;
 import com.pocketpeers.backend.groups.infrastructure.persistence.jpa.repositories.GroupRepository;
 import com.pocketpeers.backend.operations.application.internal.queryservices.ExpenseQueryServiceImpl;
 import com.pocketpeers.backend.operations.domain.model.aggregates.Expense;
@@ -27,14 +29,16 @@ public class ExpenseCommandServiceImpl implements ExpenseCommandService {
     private final ExpenseRepository expenseRepository;
     private final UserRepository userRepository;
     private final GroupRepository groupRepository;
+    private final GroupMemberRepository groupMemberRepository;
     private final ExpenseQueryServiceImpl expenseQueryServiceImpl;
     private final ApplicationEventPublisher applicationEventPublisher;
 
-    public ExpenseCommandServiceImpl(PaymentRepository paymentRepository, ExpenseRepository expenseRepository, UserRepository userRepository, GroupRepository groupRepository, ExpenseQueryServiceImpl expenseQueryServiceImpl, ApplicationEventPublisher applicationEventPublisher) {
+    public ExpenseCommandServiceImpl(PaymentRepository paymentRepository, ExpenseRepository expenseRepository, UserRepository userRepository, GroupRepository groupRepository, GroupMemberRepository groupMemberRepository, ExpenseQueryServiceImpl expenseQueryServiceImpl, ApplicationEventPublisher applicationEventPublisher) {
         this.paymentRepository = paymentRepository;
         this.expenseRepository = expenseRepository;
         this.userRepository = userRepository;
         this.groupRepository = groupRepository;
+        this.groupMemberRepository = groupMemberRepository;
         this.expenseQueryServiceImpl = expenseQueryServiceImpl;
         this.applicationEventPublisher = applicationEventPublisher;
     }
@@ -46,6 +50,14 @@ public class ExpenseCommandServiceImpl implements ExpenseCommandService {
 
         if (user.isEmpty()) {
             throw new IllegalArgumentException("User not found");
+        }
+        if (group.isEmpty()) {
+            throw new IllegalArgumentException("Group not found");
+        }
+        var groupMember = groupMemberRepository.findByGroupIdAndUser_Id(command.groupId(), command.userId())
+                .orElseThrow(() -> new IllegalArgumentException("User is not a member of the group"));
+        if (groupMember.getRole() != GroupRole.ADMIN) {
+            throw new IllegalArgumentException("Only group admins can create expenses");
         }
         Expense expense = new Expense(command.name(), command.amount(), user.get(), group.get(), command.dueDate());
         expenseRepository.save(expense);
