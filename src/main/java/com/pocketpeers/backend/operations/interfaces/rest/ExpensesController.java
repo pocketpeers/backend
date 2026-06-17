@@ -19,7 +19,6 @@ import com.pocketpeers.backend.operations.interfaces.rest.resources.ExpenseResou
 import com.pocketpeers.backend.operations.interfaces.rest.resources.ExpenseWithPaymentsResource;
 import com.pocketpeers.backend.operations.interfaces.rest.resources.PaymentResource;
 import com.pocketpeers.backend.operations.interfaces.rest.resources.UpdateExpenseResource;
-import com.pocketpeers.backend.operations.interfaces.rest.transform.CreateExpenseCommandFromResourceAssembler;
 import com.pocketpeers.backend.operations.interfaces.rest.transform.ExpenseResourceFromEntityAssembler;
 import com.pocketpeers.backend.operations.interfaces.rest.transform.PaymentResourceFromEntityAssembler;
 import com.pocketpeers.backend.operations.interfaces.rest.transform.UpdateExpenseCommandFromResourceAssembler;
@@ -63,7 +62,13 @@ public class ExpensesController {
     @PostMapping
     public ResponseEntity<ExpenseResource> createExpense(@RequestBody CreateExpenseResource resource, Authentication authentication) {
         var user = authenticatedUser(authentication);
-        var createExpenseCommand = CreateExpenseCommandFromResourceAssembler.toCommandFromResource(resource, user.getId());
+        var createExpenseCommand = new CreateExpenseCommand(
+                resource.name(),
+                resource.amount(),
+                user.getId(),
+                resource.groupId(),
+                resource.dueDate()
+        );
         var expenseId = expenseCommandService.handle(createExpenseCommand);
         //var getExpenseByNameAndUserId = new GetExpenseByNameAndUserInformationIdQuery(new ExpenseName(resource.name()), resource.requesterId());
         //var expense = expenseQueryService.handle(getExpenseByNameAndUserId);

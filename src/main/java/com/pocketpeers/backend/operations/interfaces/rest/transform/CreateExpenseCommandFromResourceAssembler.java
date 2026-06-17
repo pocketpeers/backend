@@ -4,7 +4,7 @@ import com.pocketpeers.backend.operations.domain.model.commands.CreateExpenseCom
 import com.pocketpeers.backend.operations.interfaces.rest.resources.CreateExpenseResource;
 
 public class CreateExpenseCommandFromResourceAssembler {
-    public static CreateExpenseCommand toCommandFromResource(CreateExpenseResource resource, Long userId) {
-        return new CreateExpenseCommand(resource.name(), resource.amount(), userId, resource.groupId(), resource.dueDate());
+    public static CreateExpenseCommand toCommandFromResource(CreateExpenseResource resource) {
+        return new CreateExpenseCommand(resource.name(), resource.amount(), resource.userId(), resource.groupId(), resource.dueDate());
     }
 }
