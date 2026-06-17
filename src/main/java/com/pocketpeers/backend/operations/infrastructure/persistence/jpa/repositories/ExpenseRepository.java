@@ -12,6 +12,8 @@ import java.util.Optional;
 public interface ExpenseRepository extends JpaRepository<Expense, Long> {
     Optional<Expense> findByName(String name);
     Optional<Expense> findByNameAndUser_Id(String name, Long userId);
+    List<Expense> findAllByNameIgnoreCase(String name);
+    List<Expense> findAllByNameContainingIgnoreCase(String name);
     List<Expense> findByUser_Id(Long userId);
     List<Expense> findByGroupId(Long groupId);
     List<Expense> findAllByDueDate(DueDate dueDate);

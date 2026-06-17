@@ -62,6 +62,9 @@ public class Payment extends AuditableAbstractAggregateRoot<Payment> {
     }
 
     public void pay(BigDecimal amount) {
+        if (this.confirmed && this.status == PaymentStatus.COMPLETED) {
+            throw new IllegalStateException("Completed confirmed payments cannot be modified");
+        }
         this.amountPaid = this.amountPaid.add(amount);
         if (this.amountPaid.compareTo(this.amount) > 0) {
             throw new IllegalArgumentException("Partial payment cannot exceed total amount");
@@ -70,6 +73,7 @@ public class Payment extends AuditableAbstractAggregateRoot<Payment> {
         } else {
             this.status = PaymentStatus.COMPLETED;
         }
+        this.confirmed = false;
     }
 
     public void confirmPayment() {

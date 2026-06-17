@@ -70,7 +70,10 @@ public class GroupMemberCommandServiceImpl implements GroupMemberCommandService 
 
     @Override
     public Optional<GroupMember> handle(JoinGroupWithTokenCommand command) {
-        var group = groupRepository.findById(command.groupId())
+        var group = command.groupId() == null
+                ? groupRepository.findByInvitationToken(command.token())
+                .orElseThrow(() -> new IllegalArgumentException("Invalid invitation token"))
+                : groupRepository.findById(command.groupId())
                 .orElseThrow(() -> new GroupNotFoundException(command.groupId()));
 
         if (!group.hasValidInvitationToken(command.token())) {

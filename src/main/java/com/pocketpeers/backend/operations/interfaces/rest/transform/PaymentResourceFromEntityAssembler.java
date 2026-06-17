@@ -5,6 +5,25 @@ import com.pocketpeers.backend.operations.interfaces.rest.resources.PaymentResou
 
 public class PaymentResourceFromEntityAssembler {
     public static PaymentResource toResourceFromEntity(Payment payment) {
-        return new PaymentResource(payment.getId(), payment.getDescription(), payment.getAmount(), payment.getAmountPaid(), payment.getStatus(), payment.getUser().getId(), payment.getExpense().getId());
+        return toResourceFromEntity(payment, false);
+    }
+
+    public static PaymentResource toResourceFromEntity(Payment payment, boolean includeEvidence) {
+        return new PaymentResource(
+                payment.getId(),
+                payment.getDescription(),
+                payment.getAmount(),
+                payment.getAmountPaid(),
+                payment.getStatus(),
+                payment.getConfirmed(),
+                payment.getUser().getId(),
+                payment.getExpense().getId(),
+                includeEvidence
+                        ? payment.getEvidences().stream()
+                                .map(evidence -> evidence.getPhoto())
+                                .filter(photo -> photo != null && !photo.isBlank())
+                                .toList()
+                        : java.util.List.of()
+        );
     }
 }

@@ -4,6 +4,7 @@ import com.pocketpeers.backend.groups.domain.model.commands.*;
 import com.pocketpeers.backend.groups.domain.model.queries.GetAllGroupsByUserIdQuery;
 import com.pocketpeers.backend.groups.domain.model.queries.GetAllGroupsQuery;
 import com.pocketpeers.backend.groups.domain.model.queries.GetGroupByIdQuery;
+import com.pocketpeers.backend.groups.domain.model.queries.SearchGroupsByNameQuery;
 import com.pocketpeers.backend.groups.domain.services.GroupCommandService;
 import com.pocketpeers.backend.groups.domain.services.GroupQueryService;
 import com.pocketpeers.backend.groups.interfaces.rest.resources.CreateGroupResource;
@@ -64,6 +65,14 @@ public class GroupController {
     public ResponseEntity<List<GroupResource>> getAllGroups() {
         var getAllGroupsQuery = new GetAllGroupsQuery();
         var groups = groupQueryService.handle(getAllGroupsQuery);
+        var groupResources = groups.stream().map(GroupResourceFromEntityAssembler::toResourceFromEntity).toList();
+        return ResponseEntity.ok(groupResources);
+    }
+
+    @Operation(summary = "Search groups by name")
+    @GetMapping("/search")
+    public ResponseEntity<List<GroupResource>> searchGroupsByName(@RequestParam String name) {
+        var groups = groupQueryService.handle(new SearchGroupsByNameQuery(name));
         var groupResources = groups.stream().map(GroupResourceFromEntityAssembler::toResourceFromEntity).toList();
         return ResponseEntity.ok(groupResources);
     }
