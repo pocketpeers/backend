@@ -12,9 +12,8 @@ public class ScheduledTasks {
         this.expensesNotificationService = expensesNotificationService;
     }
 
-    
-    @Scheduled(cron = "0 35 9,21 * * ?", zone = "America/Lima") 
+    @Scheduled(cron = "0 0 8 * * ?", zone = "America/Lima")
     public void sendDailyPaymentReminders() {
-        expensesNotificationService.sendPaymentReminders();
+        expensesNotificationService.createPaymentReminders();
     }
 }

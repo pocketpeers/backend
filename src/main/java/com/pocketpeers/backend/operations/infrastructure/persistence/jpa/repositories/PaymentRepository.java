@@ -11,6 +11,7 @@ import org.springframework.stereotype.Repository;
 
 import java.util.List;
 import java.util.Optional;
+import java.time.LocalDate;
 
 @Repository
 public interface PaymentRepository extends JpaRepository<Payment, Long> {
@@ -21,6 +22,16 @@ public interface PaymentRepository extends JpaRepository<Payment, Long> {
     List<Payment> findAllByExpenseId(Long expenseId);
     List<Payment> findAllByUser_IdAndStatus(Long userId, PaymentStatus status);
     Optional<Payment> findByUser_IdAndExpenseId(Long userId, Long expenseId);
+
+    @EntityGraph(attributePaths = {"expense", "expense.group", "user"})
+    @Query("""
+    SELECT p
+    FROM Payment p
+    JOIN p.expense e
+    WHERE e.dueDate.dueDate = :dueDate
+      AND p.amountPaid < p.amount
+""")
+    List<Payment> findUnpaidPaymentsDueOn(@Param("dueDate") LocalDate dueDate);
 
     /**
      * Obtiene pagos de gastos donde el usuario es administrador del grupo relacionado.

@@ -1,54 +1,82 @@
 package com.pocketpeers.backend.operations.domain.services;
 
-import com.pocketpeers.backend.operations.domain.model.aggregates.Expense;
-import com.pocketpeers.backend.operations.domain.model.queries.GetAllExpensesByDueDate;
-import com.pocketpeers.backend.operations.infrastructure.twilio.TwilioSmsService;
-import com.pocketpeers.backend.users.domain.model.aggregates.User;
-import com.pocketpeers.backend.users.domain.model.aggregates.UserInformation;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.scheduling.annotation.EnableScheduling;
+import com.pocketpeers.backend.operations.domain.model.aggregates.Payment;
+import com.pocketpeers.backend.operations.domain.model.entities.PaymentReminder;
+import com.pocketpeers.backend.operations.domain.model.valueobjects.PaymentReminderType;
+import com.pocketpeers.backend.operations.infrastructure.notifications.FcmNotificationService;
+import com.pocketpeers.backend.operations.infrastructure.persistence.jpa.repositories.PaymentReminderRepository;
+import com.pocketpeers.backend.operations.infrastructure.persistence.jpa.repositories.PaymentRepository;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
-import java.util.List;
+import java.time.format.DateTimeFormatter;
 
 @Service
-@EnableScheduling
 public class ExpensesNotificationService {
 
-    private final ExpenseQueryService expenseQueryService;
-    private final TwilioSmsService twilioSmsService;
+    private static final DateTimeFormatter DATE_FORMATTER = DateTimeFormatter.ofPattern("dd/MM/yyyy");
 
-    @Autowired
-    public ExpensesNotificationService(ExpenseQueryService expenseQueryService, TwilioSmsService twilioSmsService) {
-        this.expenseQueryService = expenseQueryService;
-        this.twilioSmsService = twilioSmsService;
+    private final PaymentRepository paymentRepository;
+    private final PaymentReminderRepository reminderRepository;
+    private final FcmNotificationService fcmNotificationService;
+
+    public ExpensesNotificationService(
+            PaymentRepository paymentRepository,
+            PaymentReminderRepository reminderRepository,
+            FcmNotificationService fcmNotificationService
+    ) {
+        this.paymentRepository = paymentRepository;
+        this.reminderRepository = reminderRepository;
+        this.fcmNotificationService = fcmNotificationService;
     }
 
-    public void sendPaymentReminders() {
+    @Transactional
+    public int createPaymentReminders() {
         LocalDate today = LocalDate.now();
-        LocalDate tomorrow = today.plusDays(1);
+        var created = 0;
 
-
-        List<Expense> upcomingPayments = expenseQueryService.handle(new GetAllExpensesByDueDate(tomorrow));
-
-        List<Expense> overduePayments = expenseQueryService.handle(new GetAllExpensesByDueDate(today));
-
-
-        for (Expense expense : upcomingPayments) {
-            sendReminder(expense, "Tu pago vence mañana: " + expense.getName() + " por " + expense.getAmount());
+        for (Payment payment : paymentRepository.findUnpaidPaymentsDueOn(today.plusDays(2))) {
+            created += createReminderIfMissing(payment, PaymentReminderType.DUE_IN_48_HOURS);
         }
 
-
-        for (Expense expense : overduePayments) {
-            sendReminder(expense, "Tu pago está atrasado: " + expense.getName() + " por " + expense.getAmount());
+        for (Payment payment : paymentRepository.findUnpaidPaymentsDueOn(today)) {
+            created += createReminderIfMissing(payment, PaymentReminderType.DUE_TODAY);
         }
+
+        return created;
     }
 
-    private void sendReminder(Expense expense, String message) {
-        User user = expense.getUser();
-        String phoneNumber = user.getUserInformation().getPhoneNumber();
+    private int createReminderIfMissing(Payment payment, PaymentReminderType type) {
+        if (reminderRepository.existsByPayment_IdAndType(payment.getId(), type)) {
+            return 0;
+        }
 
-        twilioSmsService.sendReminder(phoneNumber, message);
+        var expense = payment.getExpense();
+        var group = expense.getGroup();
+        var dueDate = expense.getDueDate();
+        var pendingAmount = payment.getAmount().subtract(payment.getAmountPaid());
+        var title = switch (type) {
+            case DUE_IN_48_HOURS -> "Tu pago vence en 48 horas";
+            case DUE_TODAY -> "Tu pago vence hoy";
+        };
+        var body = switch (type) {
+            case DUE_IN_48_HOURS -> "Grupo " + group.getName()
+                    + ": tienes S/ " + formatAmount(pendingAmount)
+                    + " pendientes hasta el " + dueDate.format(DATE_FORMATTER) + ".";
+            case DUE_TODAY -> "Grupo " + group.getName()
+                    + ": tu pago de S/ " + formatAmount(pendingAmount)
+                    + " vence hoy (" + dueDate.format(DATE_FORMATTER)
+                    + "). Un pago tardio afectara tu score de reputacion.";
+        };
+
+        var reminder = reminderRepository.save(new PaymentReminder(payment.getUser(), payment, type, title, body));
+        fcmNotificationService.sendPaymentReminder(reminder);
+        return 1;
+    }
+
+    private String formatAmount(BigDecimal amount) {
+        return amount.stripTrailingZeros().toPlainString();
     }
 }
