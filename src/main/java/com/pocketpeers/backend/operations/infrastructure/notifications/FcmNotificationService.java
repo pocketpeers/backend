@@ -1,10 +1,7 @@
 package com.pocketpeers.backend.operations.infrastructure.notifications;
 
 import com.google.firebase.FirebaseApp;
-import com.google.firebase.messaging.FirebaseMessaging;
-import com.google.firebase.messaging.FirebaseMessagingException;
-import com.google.firebase.messaging.Message;
-import com.google.firebase.messaging.Notification;
+import com.google.firebase.messaging.*;
 import com.pocketpeers.backend.operations.domain.model.aggregates.Payment;
 import com.pocketpeers.backend.operations.domain.model.entities.PaymentReminder;
 import com.pocketpeers.backend.operations.infrastructure.persistence.jpa.repositories.UserDeviceTokenRepository;
@@ -81,6 +78,12 @@ public class FcmNotificationService {
                     .setNotification(Notification.builder()
                             .setTitle(title)
                             .setBody(body)
+                            .build())
+                    .setAndroidConfig(AndroidConfig.builder()
+                            .setNotification(AndroidNotification.builder()
+                                    .setChannelId("high_importance_channel")
+                                    .setPriority(AndroidNotification.Priority.HIGH)
+                                    .build())
                             .build())
                     .putAllData(Map.of(
                             "type", "test_notification"
