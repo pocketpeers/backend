@@ -15,7 +15,7 @@ import java.time.LocalDate;
 
 @Repository
 public interface PaymentRepository extends JpaRepository<Payment, Long> {
-    @EntityGraph(attributePaths = {"evidences", "expense", "expense.group"})
+    @EntityGraph(attributePaths = {"evidences", "expense", "expense.group", "expense.user", "user"})
     Optional<Payment> findById(Long id);
 
     List<Payment> findAllByUser_Id(Long userId);

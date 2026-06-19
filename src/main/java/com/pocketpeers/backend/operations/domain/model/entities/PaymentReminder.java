@@ -11,13 +11,7 @@ import java.time.LocalDateTime;
 
 @Getter
 @Entity
-@Table(
-        name = "payment_reminders",
-        uniqueConstraints = @UniqueConstraint(
-                name = "uk_payment_reminder_payment_type",
-                columnNames = {"payment_id", "type"}
-        )
-)
+@Table(name = "payment_reminders")
 public class PaymentReminder extends AuditableModel {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)

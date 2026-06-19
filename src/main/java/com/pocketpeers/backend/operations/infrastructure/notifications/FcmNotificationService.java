@@ -26,6 +26,14 @@ public class FcmNotificationService {
         if (FirebaseApp.getApps().isEmpty()) {
             return;
         }
+        if (reminder.getId() == null) {
+            LOGGER.warn(
+                    "Skipping FCM notification because payment reminder has no id. paymentId={}, type={}",
+                    reminder.getPayment().getId(),
+                    reminder.getType()
+            );
+            return;
+        }
 
         Payment payment = reminder.getPayment();
         var tokens = tokenRepository.findByUser_Id(payment.getUser().getId());
@@ -37,7 +45,7 @@ public class FcmNotificationService {
                             .setBody(reminder.getBody())
                             .build())
                     .putAllData(Map.of(
-                            "type", "payment_reminder",
+                            "type", notificationType(reminder),
                             "notificationId", reminder.getId().toString(),
                             "paymentId", payment.getId().toString(),
                             "expenseId", payment.getExpense().getId().toString(),
@@ -127,6 +135,14 @@ public class FcmNotificationService {
             return messagingErrorCode.name();
         }
         return exc.getErrorCode() == null ? null : exc.getErrorCode().name();
+    }
+
+    private String notificationType(PaymentReminder reminder) {
+        return switch (reminder.getType()) {
+            case DUE_IN_48_HOURS, DUE_TODAY -> "payment_reminder";
+            case EXPENSE_ASSIGNED -> "expense_assigned";
+            case PAYMENT_REGISTERED -> "payment_registered";
+        };
     }
 
     private boolean isInvalidToken(FirebaseMessagingException exc) {
