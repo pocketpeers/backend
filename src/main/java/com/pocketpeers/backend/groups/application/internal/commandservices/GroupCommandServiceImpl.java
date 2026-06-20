@@ -7,6 +7,9 @@ import com.pocketpeers.backend.groups.domain.model.valueobjects.GroupRole;
 import com.pocketpeers.backend.groups.domain.services.GroupCommandService;
 import com.pocketpeers.backend.groups.infrastructure.persistence.jpa.repositories.GroupMemberRepository;
 import com.pocketpeers.backend.groups.infrastructure.persistence.jpa.repositories.GroupRepository;
+import com.pocketpeers.backend.pbl.domain.model.commands.RegisterReputationEventCommand;
+import com.pocketpeers.backend.pbl.domain.model.valueobjects.ReputationEventType;
+import com.pocketpeers.backend.pbl.domain.services.PblCommandService;
 import com.pocketpeers.backend.users.infrastructure.persistence.jpa.repositories.UserRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -19,17 +22,21 @@ public class GroupCommandServiceImpl implements GroupCommandService {
     private final GroupRepository groupRepository;
     private final GroupMemberRepository groupMemberRepository;
     private final UserRepository userRepository;
+    private final PblCommandService pblCommandService;
 
     public GroupCommandServiceImpl(GroupRepository groupRepository,
                                    GroupMemberRepository groupMemberRepository,
-                                   UserRepository userRepository) {
+                                   UserRepository userRepository,
+                                   PblCommandService pblCommandService) {
         this.groupRepository = groupRepository;
         this.groupMemberRepository = groupMemberRepository;
         this.userRepository = userRepository;
+        this.pblCommandService = pblCommandService;
     }
 
 
     @Override
+    @Transactional
     public Long handle(CreateGroupCommand command) {
 
         var user = userRepository.findById(command.adminId())
@@ -43,11 +50,19 @@ public class GroupCommandServiceImpl implements GroupCommandService {
         var groupMember = new GroupMember(group, user, GroupRole.ADMIN);
 
         try {
-         groupRepository.save(group);
-         groupMemberRepository.save(groupMember);
+            groupRepository.save(group);
+            groupMemberRepository.save(groupMember);
         } catch (Exception e) {
             throw new IllegalArgumentException("Error while saving group: " + e.getMessage());
         }
+
+        pblCommandService.handle(new RegisterReputationEventCommand(
+                command.adminId(),
+                group.getId(),
+                null,
+                ReputationEventType.GROUP_CREATED,
+                "Collaborative microfinance group created successfully"
+        ));
 
         return group.getId();
     }

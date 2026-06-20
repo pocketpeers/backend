@@ -23,10 +23,15 @@ import jakarta.transaction.Transactional;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 
+import java.time.Duration;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
 
 @Service
 public class PaymentCommandServiceImpl implements PaymentCommandService {
+    private static final ZoneId LIMA_ZONE = ZoneId.of("America/Lima");
+
     private final PaymentRepository paymentRepository;
     private final ExpenseRepository expenseRepository;
     private final UserRepository userRepository;
@@ -99,24 +104,23 @@ public class PaymentCommandServiceImpl implements PaymentCommandService {
 
     private void registerReputationEventForConfirmedPayment(Payment payment) {
         var type = reputationEventTypeFor(payment);
-        if (shouldSkipReputationEvent(payment, type)) {
-            return;
+        if (!shouldSkipReputationEvent(payment, type)) {
+            pblCommandService.handle(new RegisterReputationEventCommand(
+                    payment.getUser().getId(),
+                    payment.getExpense().getGroup().getId(),
+                    payment.getId(),
+                    type,
+                    descriptionFor(type)
+            ));
         }
-
-        pblCommandService.handle(new RegisterReputationEventCommand(
-                payment.getUser().getId(),
-                payment.getExpense().getGroup().getId(),
-                payment.getId(),
-                type,
-                descriptionFor(type)
-        ));
+        registerTimingBadgeEvents(payment);
     }
 
     private ReputationEventType reputationEventTypeFor(Payment payment) {
         if (payment.getStatus().equals("PARTIAL")) {
             return ReputationEventType.PARTIAL_PAYMENT;
         }
-        if (payment.getExpense().getDueDate().isBefore(LocalDate.now())) {
+        if (payment.getExpense().getDueDate().isBefore(LocalDate.now(LIMA_ZONE))) {
             return ReputationEventType.LATE_PAYMENT;
         }
         return ReputationEventType.ON_TIME_PAYMENT;
@@ -127,9 +131,48 @@ public class PaymentCommandServiceImpl implements PaymentCommandService {
             return reputationEventRepository.existsByPaymentIdAndType(payment.getId(), ReputationEventType.PARTIAL_PAYMENT);
         }
         if (type == ReputationEventType.ON_TIME_PAYMENT) {
-            return reputationEventRepository.existsByPaymentId(payment.getId());
+            return paymentHasCoreReputationEvent(payment);
         }
         return reputationEventRepository.existsByPaymentIdAndType(payment.getId(), type);
+    }
+
+    private boolean paymentHasCoreReputationEvent(Payment payment) {
+        return reputationEventRepository.existsByPaymentIdAndType(payment.getId(), ReputationEventType.PARTIAL_PAYMENT)
+                || reputationEventRepository.existsByPaymentIdAndType(payment.getId(), ReputationEventType.ON_TIME_PAYMENT)
+                || reputationEventRepository.existsByPaymentIdAndType(payment.getId(), ReputationEventType.LATE_PAYMENT);
+    }
+
+    private void registerTimingBadgeEvents(Payment payment) {
+        var timeUntilExpenseCloses = timeUntilExpenseCloses(payment);
+        if (timeUntilExpenseCloses.compareTo(Duration.ofHours(48)) > 0) {
+            registerPaymentBadgeEventIfMissing(payment, ReputationEventType.EARLY_PAYMENT,
+                    "Payment confirmed more than 48 hours before expense close");
+        }
+        if (!timeUntilExpenseCloses.isNegative()
+                && !timeUntilExpenseCloses.isZero()
+                && timeUntilExpenseCloses.compareTo(Duration.ofHours(1)) < 0) {
+            registerPaymentBadgeEventIfMissing(payment, ReputationEventType.JUST_IN_TIME_PAYMENT,
+                    "Payment confirmed less than one hour before expense close");
+        }
+    }
+
+    private Duration timeUntilExpenseCloses(Payment payment) {
+        var now = LocalDateTime.now(LIMA_ZONE);
+        var expenseClose = payment.getExpense().getDueDate().plusDays(1).atStartOfDay();
+        return Duration.between(now, expenseClose);
+    }
+
+    private void registerPaymentBadgeEventIfMissing(Payment payment, ReputationEventType type, String description) {
+        if (reputationEventRepository.existsByPaymentIdAndType(payment.getId(), type)) {
+            return;
+        }
+        pblCommandService.handle(new RegisterReputationEventCommand(
+                payment.getUser().getId(),
+                payment.getExpense().getGroup().getId(),
+                payment.getId(),
+                type,
+                description
+        ));
     }
 
     private String descriptionFor(ReputationEventType type) {
@@ -138,6 +181,10 @@ public class PaymentCommandServiceImpl implements PaymentCommandService {
             case ON_TIME_PAYMENT -> "Full payment confirmed in one installment";
             case LATE_PAYMENT -> "Late full payment confirmed in one installment";
             case MANUAL_ADJUSTMENT -> "Manual reputation adjustment";
+            case EARLY_PAYMENT -> "Payment confirmed more than 48 hours before expense close";
+            case GROUP_CREATED -> "Collaborative microfinance group created successfully";
+            case JUST_IN_TIME_PAYMENT -> "Payment confirmed less than one hour before expense close";
+            case ZERO_DEBT -> "Month closed with no pending debts or commitments";
         };
     }
 }

@@ -33,6 +33,27 @@ public interface PaymentRepository extends JpaRepository<Payment, Long> {
 """)
     List<Payment> findUnpaidPaymentsDueOn(@Param("dueDate") LocalDate dueDate);
 
+    @Query("""
+    SELECT COUNT(p)
+    FROM Payment p
+    JOIN p.expense e
+    WHERE p.user.id = :userId
+      AND e.dueDate.dueDate <= :date
+      AND (p.confirmed = false OR p.amountPaid < p.amount)
+""")
+    long countPendingPaymentsByUserIdDueOnOrBefore(@Param("userId") Long userId, @Param("date") LocalDate date);
+
+    @Query("""
+    SELECT CASE WHEN COUNT(p) > 0 THEN true ELSE false END
+    FROM Payment p
+    JOIN p.expense e
+    WHERE p.user.id = :userId
+      AND e.dueDate.dueDate BETWEEN :startDate AND :endDate
+""")
+    boolean existsPaymentDueForUserBetween(@Param("userId") Long userId,
+                                           @Param("startDate") LocalDate startDate,
+                                           @Param("endDate") LocalDate endDate);
+
     /**
      * Obtiene pagos de gastos donde el usuario es administrador del grupo relacionado.
      */
