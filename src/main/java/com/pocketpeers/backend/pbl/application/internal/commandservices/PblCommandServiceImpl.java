@@ -17,6 +17,11 @@ import org.springframework.stereotype.Service;
 
 @Service
 public class PblCommandServiceImpl implements PblCommandService {
+    private static final int ON_TIME_PAYMENT_POINTS = 3;
+    private static final int PARTIAL_PAYMENT_POINTS = 1;
+    private static final int LATE_PAYMENT_POINTS = -6;
+    private static final int GROUP_CREATED_POINTS = 0;
+
     private final UserRepository userRepository;
     private final UserReputationRepository userReputationRepository;
     private final ReputationEventRepository reputationEventRepository;
@@ -38,7 +43,7 @@ public class PblCommandServiceImpl implements PblCommandService {
     public Long handle(RegisterReputationEventCommand command) {
         var user = userRepository.findById(command.userId()).orElseThrow(() -> new RuntimeException("User not found"));
         var reputation = userReputationRepository.findByUser_Id(command.userId()).orElseGet(() -> new UserReputation(user));
-        var delta = calculateDelta(command.type(), reputation.getOnTimePaymentStreak());
+        var delta = calculateDelta(command.type());
         var resultingScore = reputation.applyDelta(delta);
         if (command.type() == ReputationEventType.ON_TIME_PAYMENT) reputation.registerOnTimePayment();
         if (command.type() == ReputationEventType.PARTIAL_PAYMENT) reputation.registerPartialPayment();
@@ -66,12 +71,13 @@ public class PblCommandServiceImpl implements PblCommandService {
         createBadgeIfMissing("GOLD_LEVEL", "Reputacion Oro", "Alcanzo el nivel Oro.");
     }
 
-    private int calculateDelta(ReputationEventType type, int currentStreak) {
+    private int calculateDelta(ReputationEventType type) {
         return switch (type) {
-            case ON_TIME_PAYMENT -> 5 + Math.max(0, 3 - (currentStreak / 2));
-            case PARTIAL_PAYMENT -> 3;
-            case LATE_PAYMENT -> -8;
-            case MANUAL_ADJUSTMENT, EARLY_PAYMENT, GROUP_CREATED, JUST_IN_TIME_PAYMENT, ZERO_DEBT -> 0;
+            case ON_TIME_PAYMENT -> ON_TIME_PAYMENT_POINTS;
+            case PARTIAL_PAYMENT -> PARTIAL_PAYMENT_POINTS;
+            case LATE_PAYMENT -> LATE_PAYMENT_POINTS;
+            case GROUP_CREATED -> GROUP_CREATED_POINTS;
+            case MANUAL_ADJUSTMENT, EARLY_PAYMENT, JUST_IN_TIME_PAYMENT, ZERO_DEBT -> 0;
         };
     }
 
