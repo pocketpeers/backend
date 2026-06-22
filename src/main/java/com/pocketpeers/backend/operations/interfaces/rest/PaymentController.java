@@ -127,11 +127,13 @@ public class PaymentController {
     private boolean canViewEvidence(Payment payment, Authentication authentication) {
         if (authentication == null || authentication.getName() == null) return false;
         return userRepository.findByUsername(authentication.getName())
-                .flatMap(user -> groupMemberRepository.findByGroupIdAndUser_Id(
-                        payment.getExpense().getGroup().getId(),
-                        user.getId()
-                ))
-                .map(member -> member.getRole() == GroupRole.ADMIN)
+                .map(user -> payment.getExpense().getUser().getId().equals(user.getId())
+                        || groupMemberRepository.findByGroupIdAndUser_Id(
+                                payment.getExpense().getGroup().getId(),
+                                user.getId()
+                        )
+                        .map(member -> member.getRole() == GroupRole.ADMIN)
+                        .orElse(false))
                 .orElse(false);
     }
 
