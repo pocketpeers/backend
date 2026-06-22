@@ -77,10 +77,6 @@ public class GroupMemberController {
         var getAllMembersInGroupQuery = new GetAllMembersInGroupQuery(groupId);
         var members = groupMemberQueryService.handle(getAllMembersInGroupQuery);
 
-        if (members.isEmpty()) {
-            return ResponseEntity.noContent().build();
-        }
-
         var memberResources = members.stream()
                 .map(GroupMemberResourceFromEntityAssembler::fromEntityToResource)
                 .collect(Collectors.toList());
@@ -96,6 +92,19 @@ public class GroupMemberController {
         var newMember = groupMemberCommandService.handle(command);
         if (newMember.isEmpty()) {
             return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(null); // Or handle as an error
+        }
+        var memberResource = GroupMemberResourceFromEntityAssembler.fromEntityToResource(newMember.get());
+        return ResponseEntity.status(HttpStatus.CREATED).body(memberResource);
+    }
+
+    @PostMapping("/join")
+    public ResponseEntity<GroupMemberResource> joinGroupWithToken(
+            @RequestBody JoinGroupWithTokenResource joinGroupWithTokenResource) {
+
+        var command = new JoinGroupWithTokenCommand(null, joinGroupWithTokenResource.token(), joinGroupWithTokenResource.userId());
+        var newMember = groupMemberCommandService.handle(command);
+        if (newMember.isEmpty()) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(null);
         }
         var memberResource = GroupMemberResourceFromEntityAssembler.fromEntityToResource(newMember.get());
         return ResponseEntity.status(HttpStatus.CREATED).body(memberResource);
