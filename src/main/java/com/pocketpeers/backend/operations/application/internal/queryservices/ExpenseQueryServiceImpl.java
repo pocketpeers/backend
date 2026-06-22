@@ -20,7 +20,7 @@ public class ExpenseQueryServiceImpl implements ExpenseQueryService {
 
     @Override
     public List<Expense> handle(GetAllExpensesQuery query) {
-        return expenseRepository.findAll();
+        return expenseRepository.findAll().stream().filter(Expense::isActive).toList();
     }
 
     @Override
@@ -30,7 +30,7 @@ public class ExpenseQueryServiceImpl implements ExpenseQueryService {
 
     @Override
     public List<Expense> handle(GetAllExpensesByUserIdQuery query) {
-        return expenseRepository.findByUser_Id(query.userId());
+        return expenseRepository.findByUser_Id(query.userId()).stream().filter(Expense::isActive).toList();
     }
 
     @Override
@@ -43,19 +43,21 @@ public class ExpenseQueryServiceImpl implements ExpenseQueryService {
         if (query.name() == null || query.name().trim().isEmpty()) {
             return List.of();
         }
-        return expenseRepository.findAllByNameIgnoreCase(query.name().trim());
+        return expenseRepository.findAllByNameIgnoreCase(query.name().trim()).stream()
+                .filter(Expense::isActive)
+                .toList();
     }
 
     @Override
     public List<Expense> handle(GetAllExpensesByGroupIdQuery query){
-        return expenseRepository.findByGroupId(query.groupId());
+        return expenseRepository.findByGroupId(query.groupId()).stream().filter(Expense::isActive).toList();
     }
 
     @Override
     public List<Expense> handle(GetAllExpensesByDueDate query) {
         LocalDate localDate = query.dueDate();
         DueDate dueDate = new DueDate(localDate);
-        return expenseRepository.findAllByDueDate(dueDate);
+        return expenseRepository.findAllByDueDate(dueDate).stream().filter(Expense::isActive).toList();
     }
 
 }

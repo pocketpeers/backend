@@ -22,7 +22,7 @@ public class PaymentQueryServiceImpl implements PaymentQueryService {
 
     @Override
     public List<Payment> handle(GetAllPaymentsQuery query){
-        return paymentRepository.findAll();
+        return paymentRepository.findAll().stream().filter(this::isActiveExpensePayment).toList();
     }
 
     @Override
@@ -32,12 +32,12 @@ public class PaymentQueryServiceImpl implements PaymentQueryService {
 
     @Override
         public List<Payment> handle(GetAllPaymentsByUserIdQuery query){
-        return paymentRepository.findAllByUser_Id(query.userId());
+        return paymentRepository.findAllByUser_Id(query.userId()).stream().filter(this::isActiveExpensePayment).toList();
     }
 
     @Override
     public List<Payment> handle(GetAllPaymentsByExpenseIdQuery query){
-        return paymentRepository.findAllByExpenseId(query.expenseId());
+        return paymentRepository.findAllByExpenseId(query.expenseId()).stream().filter(this::isActiveExpensePayment).toList();
     }
 
     @Override
@@ -47,7 +47,9 @@ public class PaymentQueryServiceImpl implements PaymentQueryService {
 
     @Override
     public List<Payment> handle(GetAllPaymentsByUserIdAndStatusQuery query){
-        return paymentRepository.findAllByUser_IdAndStatus(query.userId(), query.status());
+        return paymentRepository.findAllByUser_IdAndStatus(query.userId(), query.status()).stream()
+                .filter(this::isActiveExpensePayment)
+                .toList();
     }
 
     @Override
@@ -59,7 +61,11 @@ public class PaymentQueryServiceImpl implements PaymentQueryService {
                 user.get().getId(),
                 GroupRole.ADMIN
         );
-        return payments;
+        return payments.stream().filter(this::isActiveExpensePayment).toList();
+    }
+
+    private boolean isActiveExpensePayment(Payment payment) {
+        return payment.getExpense() != null && payment.getExpense().isActive();
     }
 
 }

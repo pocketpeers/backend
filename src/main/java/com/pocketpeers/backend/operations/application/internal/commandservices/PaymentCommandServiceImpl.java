@@ -55,6 +55,9 @@ public class PaymentCommandServiceImpl implements PaymentCommandService {
     public Long handle(CreatePaymentCommand command) {
         var expense =  expenseRepository.findById(command.expenseId())
                 .orElseThrow(()-> new RuntimeException("Expense not found"));
+        if (!expense.isActive()) {
+            throw new RuntimeException("Cancelled expenses cannot receive payments");
+        }
         User user = userRepository.findById(command.userId())
                 .orElseThrow(() -> new UserNotFoundException(command.userId()));
         Payment payment = new Payment(command.description(), command.amount(), user, expense);
@@ -68,6 +71,9 @@ public class PaymentCommandServiceImpl implements PaymentCommandService {
     @Transactional
     public Long handle(MakePaymentCommand command){
         return paymentRepository.findById(command.paymentId()).map(payment -> {
+            if (!payment.getExpense().isActive()) {
+                throw new RuntimeException("Cancelled expenses cannot receive payments");
+            }
             if (payment.getConfirmed() && payment.getStatus().equals(PaymentStatus.COMPLETED.name())) {
                 throw new RuntimeException("Completed confirmed payments cannot be modified");
             }
@@ -85,6 +91,9 @@ public class PaymentCommandServiceImpl implements PaymentCommandService {
     public Long handle(ConfirmPaymentCommand command) {
         return paymentRepository.findById(command.paymentId()).map(payment -> {
             Expense expense = payment.getExpense();
+            if (!expense.isActive()) {
+                throw new RuntimeException("Cancelled expenses cannot confirm payments");
+            }
             if (!expense.getUser().getUsername().equals(command.username())) {
                 throw new RuntimeException("Only the creator of the expense can confirm the payment");
             }

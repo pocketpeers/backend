@@ -171,6 +171,7 @@ public class ExpenseSmartContractAdapter implements ExpenseSmartContractPort {
 
         ContractTransaction transaction = new ContractTransaction();
         transaction.setContract(expenseContractEntity);
+        transaction.setPayment(payment);
         transaction.setTransactionHash(transactionHash);
 
         contractTransactionRepository.save(transaction);
@@ -208,6 +209,7 @@ public class ExpenseSmartContractAdapter implements ExpenseSmartContractPort {
 
         ContractTransaction contractTransaction = new ContractTransaction();
         contractTransaction.setContract(expenseContractEntity);
+        contractTransaction.setPayment(payment);
         contractTransaction.setTransactionHash(transactionHash);
 
         contractTransactionRepository.save(contractTransaction);

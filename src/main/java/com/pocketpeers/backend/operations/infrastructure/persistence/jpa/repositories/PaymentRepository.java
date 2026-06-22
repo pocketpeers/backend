@@ -29,6 +29,7 @@ public interface PaymentRepository extends JpaRepository<Payment, Long> {
     FROM Payment p
     JOIN p.expense e
     WHERE e.dueDate.dueDate = :dueDate
+      AND (e.active IS NULL OR e.active = 1)
       AND p.amountPaid < p.amount
 """)
     List<Payment> findUnpaidPaymentsDueOn(@Param("dueDate") LocalDate dueDate);
@@ -38,6 +39,7 @@ public interface PaymentRepository extends JpaRepository<Payment, Long> {
     FROM Payment p
     JOIN p.expense e
     WHERE p.user.id = :userId
+      AND (e.active IS NULL OR e.active = 1)
       AND e.dueDate.dueDate <= :date
       AND (p.confirmed = false OR p.amountPaid < p.amount)
 """)
@@ -48,6 +50,7 @@ public interface PaymentRepository extends JpaRepository<Payment, Long> {
     FROM Payment p
     JOIN p.expense e
     WHERE p.user.id = :userId
+      AND (e.active IS NULL OR e.active = 1)
       AND e.dueDate.dueDate BETWEEN :startDate AND :endDate
 """)
     boolean existsPaymentDueForUserBetween(@Param("userId") Long userId,
@@ -64,6 +67,7 @@ public interface PaymentRepository extends JpaRepository<Payment, Long> {
     JOIN e.group g 
     JOIN GroupMember gm ON gm.group.id = g.id 
     WHERE gm.user.id = :user 
+      AND (e.active IS NULL OR e.active = 1)
       AND gm.role = :role AND p.user.id != :user
 """)    List<Payment> findIncomingPaymentsByUser(@Param("user") Long user, @Param("role") GroupRole role);
 

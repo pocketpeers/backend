@@ -8,6 +8,7 @@ import com.pocketpeers.backend.operations.domain.model.queries.*;
 import com.pocketpeers.backend.operations.domain.model.valueobjects.PaymentStatus;
 import com.pocketpeers.backend.operations.domain.services.PaymentCommandService;
 import com.pocketpeers.backend.operations.domain.services.PaymentQueryService;
+import com.pocketpeers.backend.operations.infrastructure.persistence.jpa.repositories.ContractTransactionRepository;
 import com.pocketpeers.backend.operations.interfaces.rest.resources.MakePaymentResource;
 import com.pocketpeers.backend.operations.interfaces.rest.resources.CreatePaymentResource;
 import com.pocketpeers.backend.operations.interfaces.rest.resources.PaymentResource;
@@ -34,13 +35,16 @@ public class PaymentController {
     private final PaymentCommandService paymentCommandService;
     private final UserRepository userRepository;
     private final GroupMemberRepository groupMemberRepository;
+    private final ContractTransactionRepository contractTransactionRepository;
 
     public PaymentController(PaymentQueryService paymentQueryService, PaymentCommandService paymentCommandService,
-                             UserRepository userRepository, GroupMemberRepository groupMemberRepository) {
+                             UserRepository userRepository, GroupMemberRepository groupMemberRepository,
+                             ContractTransactionRepository contractTransactionRepository) {
         this.paymentQueryService = paymentQueryService;
         this.paymentCommandService = paymentCommandService;
         this.userRepository = userRepository;
         this.groupMemberRepository = groupMemberRepository;
+        this.contractTransactionRepository = contractTransactionRepository;
     }
 
     @PostMapping
@@ -50,7 +54,7 @@ public class PaymentController {
         System.out.println("Payment ID: " + paymentId);
         var getPaymentById = new GetPaymentByIdQuery(paymentId);
         var payment = paymentQueryService.handle(getPaymentById);
-        var paymentResource = PaymentResourceFromEntityAssembler.toResourceFromEntity(payment.get());
+        var paymentResource = toPaymentResource(payment.get());
         return new ResponseEntity<>(paymentResource, HttpStatus.CREATED);
     }
 
@@ -72,7 +76,7 @@ public class PaymentController {
     public ResponseEntity<List<PaymentResource>> getAllPayments() {
         var getAllPaymentsQuery = new GetAllPaymentsQuery();
         var payments = paymentQueryService.handle(getAllPaymentsQuery);
-        var paymentResources = payments.stream().map(PaymentResourceFromEntityAssembler::toResourceFromEntity).toList();
+        var paymentResources = payments.stream().map(this::toPaymentResource).toList();
         return ResponseEntity.ok(paymentResources);
     }
 
@@ -80,7 +84,7 @@ public class PaymentController {
     public ResponseEntity<List<PaymentResource>> getPaymentByUserId(@PathVariable Long userId) {
         var getAllPaymentsByUserIdQuery = new GetAllPaymentsByUserIdQuery(userId);
         var payments = paymentQueryService.handle(getAllPaymentsByUserIdQuery);
-        var paymentResources = payments.stream().map(PaymentResourceFromEntityAssembler::toResourceFromEntity).toList();
+        var paymentResources = payments.stream().map(this::toPaymentResource).toList();
         return ResponseEntity.ok(paymentResources);
     }
 
@@ -88,7 +92,7 @@ public class PaymentController {
     public ResponseEntity<List<PaymentResource>> getPaymentByExpenseId(@PathVariable Long expenseId) {
         var getAllPaymentsByExpenseIdQuery = new GetAllPaymentsByExpenseIdQuery(expenseId);
         var payments = paymentQueryService.handle(getAllPaymentsByExpenseIdQuery);
-        var paymentResources = payments.stream().map(PaymentResourceFromEntityAssembler::toResourceFromEntity).toList();
+        var paymentResources = payments.stream().map(this::toPaymentResource).toList();
         return ResponseEntity.ok(paymentResources);
     }
 
@@ -98,7 +102,8 @@ public class PaymentController {
         var payment = paymentQueryService.handle(getPaymentByIdQuery);
         var paymentResource = PaymentResourceFromEntityAssembler.toResourceFromEntity(
                 payment.get(),
-                canViewEvidence(payment.get(), authentication)
+                canViewEvidence(payment.get(), authentication),
+                paymentBlockchainHash(payment.get().getId())
         );
         return ResponseEntity.ok(paymentResource);
     }
@@ -107,7 +112,7 @@ public class PaymentController {
     public ResponseEntity<List<PaymentResource>> getPaymentByGroupIdAndUserIdAndStatus(@PathVariable Long userId, @PathVariable PaymentStatus status) {
         var getAllPaymentsByUserIdAndStatusQuery = new GetAllPaymentsByUserIdAndStatusQuery(userId, status);
         var payments = paymentQueryService.handle(getAllPaymentsByUserIdAndStatusQuery);
-        var paymentResources = payments.stream().map(PaymentResourceFromEntityAssembler::toResourceFromEntity).toList();
+        var paymentResources = payments.stream().map(this::toPaymentResource).toList();
         return ResponseEntity.ok(paymentResources);
     }
 
@@ -115,7 +120,7 @@ public class PaymentController {
     public ResponseEntity<List<PaymentResource>> getIncomingPaymentsByUserId(@PathVariable Long userId) {
         var getIncomingPaymentsByUserIdQuery = new GetIncomingPaymentsByUserIdQuery(userId);
         var payments = paymentQueryService.handle(getIncomingPaymentsByUserIdQuery);
-        var paymentResources = payments.stream().map(PaymentResourceFromEntityAssembler::toResourceFromEntity).toList();
+        var paymentResources = payments.stream().map(this::toPaymentResource).toList();
         return ResponseEntity.ok(paymentResources);
     }
 
@@ -128,5 +133,20 @@ public class PaymentController {
                 ))
                 .map(member -> member.getRole() == GroupRole.ADMIN)
                 .orElse(false);
+    }
+
+    private PaymentResource toPaymentResource(Payment payment) {
+        return PaymentResourceFromEntityAssembler.toResourceFromEntity(
+                payment,
+                false,
+                paymentBlockchainHash(payment.getId())
+        );
+    }
+
+    private String paymentBlockchainHash(Long paymentId) {
+        return contractTransactionRepository
+                .findFirstByPayment_IdOrderByCreatedAtDesc(paymentId)
+                .map(transaction -> transaction.getTransactionHash().hash())
+                .orElse("");
     }
 }
