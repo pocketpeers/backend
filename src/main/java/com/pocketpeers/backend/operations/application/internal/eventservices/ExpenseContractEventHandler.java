@@ -7,6 +7,8 @@ import com.pocketpeers.backend.operations.domain.model.valueobjects.ContractAddr
 import com.pocketpeers.backend.operations.domain.model.valueobjects.PaymentStatus;
 import com.pocketpeers.backend.operations.domain.model.valueobjects.TransactionHash;
 import com.pocketpeers.backend.operations.domain.ports.out.ExpenseSmartContractPort;
+import com.pocketpeers.backend.operations.infrastructure.persistence.jpa.repositories.ExpenseContractRepository;
+import com.pocketpeers.backend.operations.infrastructure.persistence.jpa.repositories.PaymentRepository;
 import lombok.AllArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -20,10 +22,12 @@ import org.springframework.transaction.event.TransactionalEventListener;
 @AllArgsConstructor
 public class ExpenseContractEventHandler {
     private static final Logger LOGGER = LoggerFactory.getLogger(ExpenseContractEventHandler.class);
-    private static final int PAYMENT_CONTRACT_SYNC_ATTEMPTS = 5;
+    private static final int PAYMENT_CONTRACT_SYNC_ATTEMPTS = 30;
     private static final long PAYMENT_CONTRACT_SYNC_DELAY_MILLIS = 2_000;
 
     private ExpenseSmartContractPort expenseSmartContractPort;
+    private PaymentRepository paymentRepository;
+    private ExpenseContractRepository expenseContractRepository;
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
     @Async
@@ -34,6 +38,7 @@ public class ExpenseContractEventHandler {
             ContractAddress contractAddress = expenseSmartContractPort.deployExpenseContract(event.expense());
 
             LOGGER.info("Expense contract deployed with address: {}", contractAddress.address());
+            syncExistingPaymentsForExpense(event.expense().getId());
         } catch (Exception exception) {
             LOGGER.warn(
                     "Could not deploy expense contract. expenseId={}, message={}",
@@ -46,11 +51,30 @@ public class ExpenseContractEventHandler {
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
     @Async
     public void handler(PaymentCreatedEvent event) {
+        if (expenseContractRepository.findByExpense(event.payment().getExpense()).isEmpty()) {
+            LOGGER.info(
+                    "Payment contract sync skipped until expense contract exists. paymentId={}, expenseId={}",
+                    event.payment().getId(),
+                    event.payment().getExpense().getId()
+            );
+            return;
+        }
+        syncPayment(event.payment());
+    }
+
+    private void syncExistingPaymentsForExpense(Long expenseId) {
+        var payments = paymentRepository.findAllByExpenseId(expenseId);
+        for (var payment : payments) {
+            syncPayment(payment);
+        }
+    }
+
+    private void syncPayment(com.pocketpeers.backend.operations.domain.model.aggregates.Payment payment) {
         for (var attempt = 1; attempt <= PAYMENT_CONTRACT_SYNC_ATTEMPTS; attempt++) {
             try {
                 TransactionHash transactionHash = expenseSmartContractPort.addPaymentToExpenseContract(
-                            event.payment().getExpense(),
-                            event.payment()
+                            payment.getExpense(),
+                            payment
                     );
                 LOGGER.info("Payment added to expense contract with transaction hash: {}", transactionHash.hash());
                 return;
@@ -58,13 +82,13 @@ public class ExpenseContractEventHandler {
                 if (attempt == PAYMENT_CONTRACT_SYNC_ATTEMPTS) {
                     LOGGER.warn(
                             "Could not add payment to expense contract. paymentId={}, attempts={}, message={}",
-                            event.payment().getId(),
+                            payment.getId(),
                             attempt,
                             exception.getMessage()
                     );
                     return;
                 }
-                waitBeforeRetry(event.payment().getId(), attempt, exception);
+                waitBeforeRetry(payment.getId(), attempt, exception);
             }
         }
     }
