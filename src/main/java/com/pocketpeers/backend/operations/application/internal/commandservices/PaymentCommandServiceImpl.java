@@ -12,6 +12,7 @@ import com.pocketpeers.backend.operations.domain.model.events.PaymentUpdatedEven
 import com.pocketpeers.backend.operations.domain.model.valueobjects.PaymentStatus;
 import com.pocketpeers.backend.operations.domain.services.PaymentCommandService;
 import com.pocketpeers.backend.operations.infrastructure.persistence.jpa.repositories.ExpenseRepository;
+import com.pocketpeers.backend.operations.infrastructure.persistence.jpa.repositories.PaymentEvidenceRepository;
 import com.pocketpeers.backend.operations.infrastructure.persistence.jpa.repositories.PaymentRepository;
 import com.pocketpeers.backend.pbl.domain.model.commands.RegisterReputationEventCommand;
 import com.pocketpeers.backend.pbl.domain.model.valueobjects.ReputationEventType;
@@ -34,17 +35,20 @@ public class PaymentCommandServiceImpl implements PaymentCommandService {
 
     private final PaymentRepository paymentRepository;
     private final ExpenseRepository expenseRepository;
+    private final PaymentEvidenceRepository paymentEvidenceRepository;
     private final UserRepository userRepository;
     private final ApplicationEventPublisher applicationEventPublisher;
     private final PblCommandService pblCommandService;
     private final ReputationEventRepository reputationEventRepository;
 
     public PaymentCommandServiceImpl(PaymentRepository paymentRepository, ExpenseRepository expenseRepository,
+                                     PaymentEvidenceRepository paymentEvidenceRepository,
                                      UserRepository userRepository, ApplicationEventPublisher applicationEventPublisher,
                                      PblCommandService pblCommandService,
                                      ReputationEventRepository reputationEventRepository) {
         this.paymentRepository = paymentRepository;
         this.expenseRepository = expenseRepository;
+        this.paymentEvidenceRepository = paymentEvidenceRepository;
         this.userRepository = userRepository;
         this.applicationEventPublisher = applicationEventPublisher;
         this.pblCommandService = pblCommandService;
@@ -55,6 +59,9 @@ public class PaymentCommandServiceImpl implements PaymentCommandService {
     public Long handle(CreatePaymentCommand command) {
         var expense =  expenseRepository.findById(command.expenseId())
                 .orElseThrow(()-> new RuntimeException("Expense not found"));
+        if (!expense.isActive()) {
+            throw new RuntimeException("Cancelled expenses cannot receive payments");
+        }
         User user = userRepository.findById(command.userId())
                 .orElseThrow(() -> new UserNotFoundException(command.userId()));
         Payment payment = new Payment(command.description(), command.amount(), user, expense);
@@ -68,12 +75,18 @@ public class PaymentCommandServiceImpl implements PaymentCommandService {
     @Transactional
     public Long handle(MakePaymentCommand command){
         return paymentRepository.findById(command.paymentId()).map(payment -> {
+            if (!payment.getExpense().isActive()) {
+                throw new RuntimeException("Cancelled expenses cannot receive payments");
+            }
             if (payment.getConfirmed() && payment.getStatus().equals(PaymentStatus.COMPLETED.name())) {
                 throw new RuntimeException("Completed confirmed payments cannot be modified");
             }
             payment.pay(command.amount());
-            PaymentEvidence evidence = new PaymentEvidence(payment, command.photo());
-            payment.addEvidence(evidence);
+            if (command.photo() != null && !command.photo().isBlank()) {
+                PaymentEvidence evidence = new PaymentEvidence(payment, command.photo());
+                payment.addEvidence(evidence);
+                paymentEvidenceRepository.save(evidence);
+            }
             paymentRepository.save(payment);
             applicationEventPublisher.publishEvent(new PaymentUpdatedEvent(payment));
             return payment.getId();
@@ -85,6 +98,9 @@ public class PaymentCommandServiceImpl implements PaymentCommandService {
     public Long handle(ConfirmPaymentCommand command) {
         return paymentRepository.findById(command.paymentId()).map(payment -> {
             Expense expense = payment.getExpense();
+            if (!expense.isActive()) {
+                throw new RuntimeException("Cancelled expenses cannot confirm payments");
+            }
             if (!expense.getUser().getUsername().equals(command.username())) {
                 throw new RuntimeException("Only the creator of the expense can confirm the payment");
             }

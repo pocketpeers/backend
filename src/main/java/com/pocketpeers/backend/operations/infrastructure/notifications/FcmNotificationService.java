@@ -139,7 +139,7 @@ public class FcmNotificationService {
 
     private String notificationType(PaymentReminder reminder) {
         return switch (reminder.getType()) {
-            case DUE_IN_48_HOURS, DUE_TODAY -> "payment_reminder";
+            case DUE_IN_48_HOURS, DUE_TODAY, OVERDUE_MANUAL -> "payment_reminder";
             case EXPENSE_ASSIGNED -> "expense_assigned";
             case PAYMENT_REGISTERED -> "payment_registered";
         };

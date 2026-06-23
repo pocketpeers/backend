@@ -11,10 +11,17 @@ import com.pocketpeers.backend.groups.domain.services.GroupQueryService;
 import com.pocketpeers.backend.groups.infrastructure.persistence.jpa.repositories.GroupMemberRepository;
 import com.pocketpeers.backend.groups.interfaces.rest.resources.CreateGroupResource;
 import com.pocketpeers.backend.groups.interfaces.rest.resources.GroupResource;
+import com.pocketpeers.backend.groups.interfaces.rest.resources.ManualOverdueReminderResource;
+import com.pocketpeers.backend.groups.interfaces.rest.resources.OverdueMemberResource;
+import com.pocketpeers.backend.groups.interfaces.rest.resources.OverduePaymentDebtResource;
 import com.pocketpeers.backend.groups.interfaces.rest.resources.UpdateGroupImageResource;
 import com.pocketpeers.backend.groups.interfaces.rest.resources.UpdateGroupResource;
 import com.pocketpeers.backend.groups.interfaces.rest.transform.CreateGroupCommandFromResourceAssembler;
 import com.pocketpeers.backend.groups.interfaces.rest.transform.GroupResourceFromEntityAssembler;
+import com.pocketpeers.backend.operations.domain.model.aggregates.Payment;
+import com.pocketpeers.backend.operations.domain.services.ExpensesNotificationService;
+import com.pocketpeers.backend.operations.infrastructure.persistence.jpa.repositories.PaymentRepository;
+import com.pocketpeers.backend.users.domain.model.aggregates.UserInformation;
 import com.pocketpeers.backend.users.infrastructure.persistence.jpa.repositories.UserRepository;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -24,7 +31,13 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
+import java.math.BigDecimal;
+import java.time.LocalDate;
+import java.time.temporal.ChronoUnit;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 @RestController
 @CrossOrigin(origins = "*", allowedHeaders = "*", methods = {RequestMethod.GET, RequestMethod.POST, RequestMethod.PUT, RequestMethod.PATCH, RequestMethod.DELETE})
@@ -37,13 +50,19 @@ public class GroupController {
     private final GroupQueryService groupQueryService;
     private final GroupMemberRepository groupMemberRepository;
     private final UserRepository userRepository;
+    private final PaymentRepository paymentRepository;
+    private final ExpensesNotificationService expensesNotificationService;
 
     public GroupController(GroupCommandService groupCommandService, GroupQueryService groupQueryService,
-                           GroupMemberRepository groupMemberRepository, UserRepository userRepository) {
+                           GroupMemberRepository groupMemberRepository, UserRepository userRepository,
+                           PaymentRepository paymentRepository,
+                           ExpensesNotificationService expensesNotificationService) {
         this.groupCommandService = groupCommandService;
         this.groupQueryService = groupQueryService;
         this.groupMemberRepository = groupMemberRepository;
         this.userRepository = userRepository;
+        this.paymentRepository = paymentRepository;
+        this.expensesNotificationService = expensesNotificationService;
     }
 
     @Operation(summary = "Create a new group")
@@ -146,6 +165,63 @@ public class GroupController {
         return ResponseEntity.ok(token);
     }
 
+    @Operation(summary = "Get overdue members in a group")
+    @GetMapping("/{groupId}/overdue-members")
+    public ResponseEntity<List<OverdueMemberResource>> getOverdueMembers(@PathVariable Long groupId) {
+        var today = LocalDate.now();
+        var payments = paymentRepository.findOverduePaymentsByGroupId(groupId, today);
+        Map<Long, OverdueMemberAccumulator> members = new LinkedHashMap<>();
+
+        for (var payment : payments) {
+            var user = payment.getUser();
+            var accumulator = members.computeIfAbsent(user.getId(), userId ->
+                    new OverdueMemberAccumulator(userId, fullName(payment), photo(payment)));
+            accumulator.add(payment, today);
+        }
+
+        var resources = members.values().stream()
+                .map(OverdueMemberAccumulator::toResource)
+                .sorted(Comparator
+                        .comparing(OverdueMemberResource::maxDaysOverdue, Comparator.reverseOrder())
+                        .thenComparing(OverdueMemberResource::overdueAmount, Comparator.reverseOrder()))
+                .toList();
+
+        return ResponseEntity.ok(resources);
+    }
+
+    @Operation(summary = "Get overdue debts for a group member")
+    @GetMapping("/{groupId}/overdue-members/{memberId}")
+    public ResponseEntity<List<OverduePaymentDebtResource>> getOverdueMemberDebts(
+            @PathVariable Long groupId,
+            @PathVariable Long memberId
+    ) {
+        var today = LocalDate.now();
+        var resources = paymentRepository.findOverduePaymentsByGroupIdAndUserId(groupId, memberId, today)
+                .stream()
+                .map(payment -> toDebtResource(payment, today))
+                .toList();
+
+        return ResponseEntity.ok(resources);
+    }
+
+    @Operation(summary = "Send a manual overdue reminder to a group member")
+    @PostMapping("/{groupId}/overdue-members/{memberId}/reminder")
+    public ResponseEntity<ManualOverdueReminderResource> sendManualOverdueReminder(
+            @PathVariable Long groupId,
+            @PathVariable Long memberId,
+            Authentication authentication
+    ) {
+        if (!isAuthenticatedGroupAdmin(groupId, authentication)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+        }
+
+        var created = expensesNotificationService.createManualOverdueReminders(groupId, memberId);
+        var message = created == 0
+                ? "No overdue payments found for this member"
+                : "Manual overdue reminder created";
+        return ResponseEntity.ok(new ManualOverdueReminderResource(memberId, created, false, message));
+    }
+
     private boolean isAuthenticatedGroupAdmin(Long groupId, Authentication authentication) {
         if (authentication == null || authentication.getName() == null) {
             return false;
@@ -153,6 +229,90 @@ public class GroupController {
         return userRepository.findByUsername(authentication.getName())
                 .map(user -> groupMemberRepository.existsByGroupIdAndUser_IdAndRole(groupId, user.getId(), GroupRole.ADMIN))
                 .orElse(false);
+    }
+
+    private OverduePaymentDebtResource toDebtResource(Payment payment, LocalDate today) {
+        var expense = payment.getExpense();
+        var dueDate = expense.getDueDate();
+        return new OverduePaymentDebtResource(
+                payment.getId(),
+                expense.getId(),
+                expense.getName(),
+                expense.getGroup().getName(),
+                payment.getAmount(),
+                amountPaid(payment),
+                overdueAmount(payment),
+                dueDate,
+                daysOverdue(dueDate, today),
+                payment.getStatus(),
+                payment.getConfirmed()
+        );
+    }
+
+    private static BigDecimal overdueAmount(Payment payment) {
+        return payment.getAmount().subtract(amountPaid(payment));
+    }
+
+    private static BigDecimal amountPaid(Payment payment) {
+        return payment.getAmountPaid() == null ? BigDecimal.ZERO : payment.getAmountPaid();
+    }
+
+    private static long daysOverdue(LocalDate dueDate, LocalDate today) {
+        return ChronoUnit.DAYS.between(dueDate, today);
+    }
+
+    private static String fullName(Payment payment) {
+        UserInformation userInformation = payment.getUser().getUserInformation();
+        if (userInformation == null) {
+            return payment.getUser().getUsername();
+        }
+        return userInformation.getFullName();
+    }
+
+    private static String photo(Payment payment) {
+        UserInformation userInformation = payment.getUser().getUserInformation();
+        if (userInformation == null) {
+            return "";
+        }
+        return userInformation.getPhoto();
+    }
+
+    private static class OverdueMemberAccumulator {
+        private final Long userId;
+        private final String fullName;
+        private final String photo;
+        private BigDecimal overdueAmount = BigDecimal.ZERO;
+        private LocalDate oldestDueDate;
+        private long maxDaysOverdue = 0;
+        private int overduePaymentsCount = 0;
+
+        private OverdueMemberAccumulator(Long userId, String fullName, String photo) {
+            this.userId = userId;
+            this.fullName = fullName;
+            this.photo = photo;
+        }
+
+        private void add(Payment payment, LocalDate today) {
+            var dueDate = payment.getExpense().getDueDate();
+            overdueAmount = overdueAmount.add(GroupController.overdueAmount(payment));
+            overduePaymentsCount++;
+            if (oldestDueDate == null || dueDate.isBefore(oldestDueDate)) {
+                oldestDueDate = dueDate;
+            }
+            maxDaysOverdue = Math.max(maxDaysOverdue, daysOverdue(dueDate, today));
+        }
+
+        private OverdueMemberResource toResource() {
+            return new OverdueMemberResource(
+                    userId,
+                    fullName,
+                    photo,
+                    overdueAmount,
+                    oldestDueDate,
+                    maxDaysOverdue,
+                    overduePaymentsCount
+            );
+        }
     }
 
 }

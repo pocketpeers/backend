@@ -4,5 +4,6 @@ public enum PaymentReminderType {
     DUE_IN_48_HOURS,
     DUE_TODAY,
     EXPENSE_ASSIGNED,
-    PAYMENT_REGISTERED
+    PAYMENT_REGISTERED,
+    OVERDUE_MANUAL
 }

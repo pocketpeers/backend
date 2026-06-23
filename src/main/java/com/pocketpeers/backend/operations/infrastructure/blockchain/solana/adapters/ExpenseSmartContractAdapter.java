@@ -13,29 +13,29 @@ import com.pocketpeers.backend.operations.infrastructure.persistence.jpa.reposit
 import com.pocketpeers.backend.operations.infrastructure.persistence.jpa.repositories.ExpenseContractRepository;
 import jakarta.transaction.Transactional;
 import lombok.RequiredArgsConstructor;
-import org.p2p.solanaj.core.Account;
-import org.p2p.solanaj.core.AccountMeta;
-import org.p2p.solanaj.core.TransactionInstruction;
 import org.p2p.solanaj.core.PublicKey;
 import org.p2p.solanaj.core.Transaction;
-import org.springframework.beans.factory.annotation.Value;
+import org.p2p.solanaj.core.TransactionInstruction;
+import org.p2p.solanaj.programs.SystemProgram;
 import org.springframework.stereotype.Service;
 
-import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
+import java.nio.charset.StandardCharsets;
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 
 @Service
 @RequiredArgsConstructor
 public class ExpenseSmartContractAdapter implements ExpenseSmartContractPort {
+    private static final String MEMO_PROGRAM_ID = "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr";
+    private static final Duration SIGNATURE_STATUS_TIMEOUT = Duration.ofSeconds(90);
+    private static final long SIGNATURE_STATUS_POLL_MILLIS = 1_500;
 
     private final SolanaClient solanaClient;
     private final ExpenseContractRepository expenseContractRepository;
     private final ContractTransactionRepository contractTransactionRepository;
-
-    @Value("${solana.program.id}")
-    private String programId;
 
     private long obtenerSaldoBackend() throws Exception {
         PublicKey walletKey = solanaClient.getSignerAccount().getPublicKey();
@@ -45,95 +45,63 @@ public class ExpenseSmartContractAdapter implements ExpenseSmartContractPort {
     }
 
     @Override
+    @Transactional
     public ContractAddress deployExpenseContract(Expense expense) throws Exception {
         expenseContractRepository.findByExpense(expense)
                 .ifPresent(existingContract -> {
                     throw new IllegalArgumentException("Expense contract already exists for the given expense");
                 });
 
-        Account expenseDataAccount = new Account();
+        PublicKey memoProgramPublicKey = new PublicKey(MEMO_PROGRAM_ID);
+        PublicKey feePayerPublicKey = solanaClient.getSignerAccount().getPublicKey();
+
         String signature;
-
         try {
-            PublicKey programPublicKey = new PublicKey(programId);
-            PublicKey feePayerPublicKey = solanaClient.getSignerAccount().getPublicKey();
-            PublicKey dataAccountPublicKey = expenseDataAccount.getPublicKey();
+            String latestBlockhash = latestBlockhash();
 
-            // Obtener el último blockhash mediante el método JSON-RPC estándar vigente
-            Map<String, Object> blockhashResult = (Map<String, Object>) solanaClient.getRpcClient().call("getLatestBlockhash", null, Map.class);
-            Map<String, Object> valueMap = (Map<String, Object>) blockhashResult.get("value");
-            String latestBlockhash = (String) valueMap.get("blockhash");
-
-            // Definir el tamaño del espacio en bytes y calcular los Lamports mínimos para Rent Exemption
-            long space = 120;
-            long lamports = solanaClient.getRpcClient().getApi().getMinimumBalanceForRentExemption(space);
-
-
-            // Estructura oficial del System Instruction para CreateAccount:
-            // [4 bytes Discriminator (0)] + [8 bytes Lamports] + [8 bytes Space] + [32 bytes ProgramOwner]
-            ByteBuffer systemInstructionBuffer = ByteBuffer.allocate(52).order(ByteOrder.LITTLE_ENDIAN);
-            systemInstructionBuffer.putInt(0);
-            systemInstructionBuffer.putLong(lamports);
-            systemInstructionBuffer.putLong(space);
-            systemInstructionBuffer.put(programPublicKey.toByteArray()); // ID de Smart Contract en Rust
-
-            TransactionInstruction createAccountInstruction = new TransactionInstruction(
-                    programPublicKey,
-                    List.of(
-                            new AccountMeta(feePayerPublicKey, true, true),
-                            new AccountMeta(dataAccountPublicKey, true, true)
-                    ),
-                    systemInstructionBuffer.array()
-            );
-
-            // Invocar al Smart Contract personalizado para inicializar el gasto
-            byte[] instructionData = serializeExpenseData(expense);
-            TransactionInstruction createExpenseInstruction = new TransactionInstruction(
-                    programPublicKey,
-                    List.of(
-                            new AccountMeta(feePayerPublicKey, true, true),
-                            new AccountMeta(dataAccountPublicKey, true, true)
-                    ),
-                    instructionData
-            );
-
-            // Construir la transacción con ambas instrucciones coordinadas en orden
             Transaction transaction = new Transaction();
-            transaction.addInstruction(createAccountInstruction);
-            transaction.addInstruction(createExpenseInstruction);
+
+            // 1. Añadimos una micro-transferencia a nosotros mismos para activar la Tx en la red (Costo: 1000 Lamports)
+            transaction.addInstruction(SystemProgram.transfer(
+                    feePayerPublicKey,
+                    feePayerPublicKey,
+                    1_000
+            ));
+
+            // 2. Adjuntamos el JSON metadata del gasto usando el Memo Program
+            String memoJson = String.format("{\"action\":\"CREATE_EXPENSE\",\"id\":%d,\"amount\":%d,\"name\":\"%s\"}",
+                    expense.getId(), expense.getAmount().longValue(), expense.getName());
+
+            transaction.addInstruction(new TransactionInstruction(
+                    memoProgramPublicKey,
+                    Collections.emptyList(), // El programa de Memos no requiere llaves obligatorias
+                    memoJson.getBytes(StandardCharsets.UTF_8)
+            ));
+
             transaction.setRecentBlockHash(latestBlockhash);
 
-            // Agrupamos los firmantes en una lista para el envío limpio
-            List<Account> signers = List.of(solanaClient.getSignerAccount(), expenseDataAccount);
-
-            signature = solanaClient.getRpcClient().getApi().sendTransaction(
-                    transaction,
-                    signers,
-                    latestBlockhash
-            );
-            System.out.println("Expense contract deployed with signature: " + signature);
-
-        } catch (Exception e) {
-            System.out.println("Failed to create Solana expense account: " + e.getMessage());
-            throw new RuntimeException("Failed to create Solana expense account: " + e.getMessage(), e);
+            signature = sendTransaction(transaction, latestBlockhash);
+            System.out.println("Expense transaction recorded with signature: " + signature);
+            waitForSuccessfulSignature(signature);
+        } catch (Exception exception) {
+            System.out.println("Failed to record expense on Solana: " + exception.getMessage());
+            throw new RuntimeException("Failed to record expense on Solana: " + exception.getMessage(), exception);
         }
 
-        String accountAddressStr = expenseDataAccount.getPublicKey().toBase58();
-
-        ExpenseContract expenseContract = new ExpenseContract(
-                new ContractAddress(accountAddressStr),
+        // Guardamos el Hash de la firma como la dirección "virtual" del contrato
+        ExpenseContract expenseContract = expenseContractRepository.save(new ExpenseContract(
+                new ContractAddress(signature),
                 expense
-        );
+        ));
 
         ContractTransaction transaction = new ContractTransaction();
         transaction.setContract(expenseContract);
         transaction.setTransactionHash(new TransactionHash(signature));
-
         contractTransactionRepository.save(transaction);
 
         obtenerSaldoBackend();
 
-        return new ContractAddress(accountAddressStr);
+        return expenseContract.getContractAddress();
     }
 
     @Override
@@ -142,37 +110,45 @@ public class ExpenseSmartContractAdapter implements ExpenseSmartContractPort {
         ExpenseContract expenseContractEntity = expenseContractRepository.findByExpense(expense)
                 .orElseThrow(() -> new RuntimeException("Expense contract not found for the given expense"));
 
+        PublicKey memoProgramPublicKey = new PublicKey(MEMO_PROGRAM_ID);
+        PublicKey feePayerPublicKey = solanaClient.getSignerAccount().getPublicKey();
         String signature;
         try {
-            PublicKey expenseAccountKey = new PublicKey(expenseContractEntity.getContractAddress().address());
-            byte[] instructionData = serializePaymentData(payment);
+            Transaction transaction = new Transaction();
 
-            TransactionInstruction addPaymentInstruction = new TransactionInstruction(
-                    new PublicKey(programId),
-                    List.of(
-                            new AccountMeta(solanaClient.getSignerAccount().getPublicKey(), true, false),
-                            new AccountMeta(expenseAccountKey, false, true)
-                    ),
-                    instructionData
-            );
+            // Transferencia real del pago a nosotros mismos (o la wallet destino que decidas)
+            transaction.addInstruction(SystemProgram.transfer(
+                    feePayerPublicKey,
+                    feePayerPublicKey,
+                    1_000
+            ));
 
-            Transaction transaction = new Transaction().addInstruction(addPaymentInstruction);
-            signature = solanaClient.getRpcClient().getApi().sendTransaction(
-                    transaction,
-                    solanaClient.getSignerAccount()
-            );
+            // Memo de auditoría vinculando el pago al hash del gasto original
+            String memoJson = String.format("{\"action\":\"ADD_PAYMENT\",\"paymentId\":%d,\"expenseTx\":\"%s\",\"amount\":%d}",
+                    payment.getId(), expenseContractEntity.getContractAddress().address(), payment.getAmount().longValue());
 
-        } catch (Exception e) {
-            System.out.println("Failed to add payment on Solana: " + e.getMessage());
-            throw new RuntimeException("Failed to add payment on Solana: " + e.getMessage(), e);
+            transaction.addInstruction(new TransactionInstruction(
+                    memoProgramPublicKey,
+                    Collections.emptyList(),
+                    memoJson.getBytes(StandardCharsets.UTF_8)
+            ));
+
+            String latestBlockhash = latestBlockhash();
+            transaction.setRecentBlockHash(latestBlockhash);
+
+            signature = sendTransaction(transaction, latestBlockhash);
+            waitForSuccessfulSignature(signature);
+        } catch (Exception exception) {
+            System.out.println("Failed to add payment on Solana: " + exception.getMessage());
+            throw new RuntimeException("Failed to add payment on Solana: " + exception.getMessage(), exception);
         }
 
         TransactionHash transactionHash = new TransactionHash(signature);
 
         ContractTransaction transaction = new ContractTransaction();
         transaction.setContract(expenseContractEntity);
+        transaction.setPayment(payment);
         transaction.setTransactionHash(transactionHash);
-
         contractTransactionRepository.save(transaction);
 
         obtenerSaldoBackend();
@@ -186,30 +162,42 @@ public class ExpenseSmartContractAdapter implements ExpenseSmartContractPort {
         ExpenseContract expenseContractEntity = expenseContractRepository.findByExpense(payment.getExpense())
                 .orElseThrow(() -> new Exception("Expense contract not found for the given payment"));
 
-        PublicKey expenseAccountKey = new PublicKey(expenseContractEntity.getContractAddress().address());
-        byte[] instructionData = serializeStatusData(payment.getId(), status);
+        PublicKey memoProgramPublicKey = new PublicKey(MEMO_PROGRAM_ID);
+        PublicKey feePayerPublicKey = solanaClient.getSignerAccount().getPublicKey();
+        String signature;
+        try {
+            Transaction transaction = new Transaction();
 
-        TransactionInstruction updateInstruction = new TransactionInstruction(
-                new PublicKey(programId),
-                List.of(
-                        new AccountMeta(solanaClient.getSignerAccount().getPublicKey(), true, false),
-                        new AccountMeta(expenseAccountKey, false, true)
-                ),
-                instructionData
-        );
+            transaction.addInstruction(SystemProgram.transfer(
+                    feePayerPublicKey,
+                    feePayerPublicKey,
+                    1_000
+            ));
 
-        Transaction transaction = new Transaction().addInstruction(updateInstruction);
-        String signature = solanaClient.getRpcClient().getApi().sendTransaction(
-                transaction,
-                solanaClient.getSignerAccount()
-        );
+            String memoJson = String.format("{\"action\":\"UPDATE_STATUS\",\"paymentId\":%d,\"status\":\"%s\"}",
+                    payment.getId(), status.name());
+
+            transaction.addInstruction(new TransactionInstruction(
+                    memoProgramPublicKey,
+                    Collections.emptyList(),
+                    memoJson.getBytes(StandardCharsets.UTF_8)
+            ));
+
+            String latestBlockhash = latestBlockhash();
+            transaction.setRecentBlockHash(latestBlockhash);
+
+            signature = sendTransaction(transaction, latestBlockhash);
+            waitForSuccessfulSignature(signature);
+        } catch (Exception exception) {
+            throw new RuntimeException("Failed to update payment status on Solana: " + exception.getMessage(), exception);
+        }
 
         TransactionHash transactionHash = new TransactionHash(signature);
 
         ContractTransaction contractTransaction = new ContractTransaction();
         contractTransaction.setContract(expenseContractEntity);
+        contractTransaction.setPayment(payment);
         contractTransaction.setTransactionHash(transactionHash);
-
         contractTransactionRepository.save(contractTransaction);
 
         obtenerSaldoBackend();
@@ -217,31 +205,51 @@ public class ExpenseSmartContractAdapter implements ExpenseSmartContractPort {
         return transactionHash;
     }
 
-    private byte[] serializeExpenseData(Expense expense) {
-        ByteBuffer buffer = ByteBuffer.allocate(120).order(ByteOrder.LITTLE_ENDIAN);
-        buffer.put((byte) 0);
-        buffer.putLong(expense.getId());
-        buffer.putLong(expense.getAmount().longValue());
-        buffer.putLong(expense.getUser().getId());
-        buffer.putLong(expense.getDueDate().toEpochDay());
-        buffer.putLong(expense.getGroup().getId());
-        return buffer.array();
+    private String sendTransaction(Transaction transaction, String latestBlockhash) throws Exception {
+        return solanaClient.getRpcClient().getApi().sendTransaction(
+                transaction,
+                List.of(solanaClient.getSignerAccount()),
+                latestBlockhash
+        );
     }
 
-    private byte[] serializePaymentData(Payment payment) {
-        ByteBuffer buffer = ByteBuffer.allocate(60).order(ByteOrder.LITTLE_ENDIAN);
-        buffer.put((byte) 1);
-        buffer.putLong(payment.getId());
-        buffer.putLong(payment.getAmount().longValue());
-        buffer.putLong(payment.getUser().getId());
-        return buffer.array();
+    private String latestBlockhash() throws Exception {
+        Map<String, Object> blockhashResult = solanaClient.getRpcClient().call(
+                "getLatestBlockhash",
+                null,
+                Map.class
+        );
+        Map<String, Object> valueMap = (Map<String, Object>) blockhashResult.get("value");
+        return (String) valueMap.get("blockhash");
     }
 
-    private byte[] serializeStatusData(Long paymentId, PaymentStatus status) {
-        ByteBuffer buffer = ByteBuffer.allocate(30).order(ByteOrder.LITTLE_ENDIAN);
-        buffer.put((byte) 2);
-        buffer.putLong(paymentId);
-        buffer.put((byte) status.ordinal());
-        return buffer.array();
+    private void waitForSuccessfulSignature(String signature) throws Exception {
+        long deadline = System.currentTimeMillis() + SIGNATURE_STATUS_TIMEOUT.toMillis();
+        while (System.currentTimeMillis() < deadline) {
+            Map<String, Object> result = solanaClient.getRpcClient().call(
+                    "getSignatureStatuses",
+                    signatureStatusParams(signature),
+                    Map.class
+            );
+            List<?> values = (List<?>) result.get("value");
+            if (values != null && !values.isEmpty() && values.get(0) instanceof Map<?, ?> status) {
+                Object error = status.get("err");
+                if (error != null) {
+                    throw new RuntimeException("Solana transaction failed. signature=" + signature + ", err=" + error);
+                }
+                Object confirmationStatus = status.get("confirmationStatus");
+                if ("confirmed".equals(confirmationStatus) || "finalized".equals(confirmationStatus)) {
+                    return;
+                }
+            }
+            Thread.sleep(SIGNATURE_STATUS_POLL_MILLIS);
+        }
+        throw new RuntimeException("Timed out waiting for Solana confirmation. signature=" + signature);
+    }
+
+    private List<Object> signatureStatusParams(String signature) {
+        var signatures = new ArrayList<String>();
+        signatures.add(signature);
+        return List.of(signatures, Map.of("searchTransactionHistory", true));
     }
 }

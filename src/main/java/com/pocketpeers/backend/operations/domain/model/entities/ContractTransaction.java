@@ -19,6 +19,10 @@ public class ContractTransaction extends AuditableModel{
     @ManyToOne(cascade = CascadeType.ALL, fetch = FetchType.EAGER)
     private ExpenseContract contract;
 
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "payment_id")
+    private com.pocketpeers.backend.operations.domain.model.aggregates.Payment payment;
+
     @Embedded
     private TransactionHash transactionHash;
 

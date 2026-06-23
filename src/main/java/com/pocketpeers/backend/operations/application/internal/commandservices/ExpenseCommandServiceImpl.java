@@ -20,7 +20,6 @@ import jakarta.transaction.Transactional;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 
-import java.util.List;
 import java.util.Optional;
 
 @Service
@@ -86,9 +85,11 @@ public class ExpenseCommandServiceImpl implements ExpenseCommandService {
         if (!expenseRepository.existsById(command.expenseId()))
             throw new IllegalArgumentException("Expense does not exists");
 
-        List<Payment> payments = paymentRepository.findAllByExpenseId(command.expenseId());
-        paymentRepository.deleteAll(payments);
-
-        expenseRepository.deleteById(command.expenseId());
+        var expense = expenseRepository.findById(command.expenseId())
+                .orElseThrow(() -> new IllegalArgumentException("Expense does not exists"));
+        if (!expense.getUser().getUsername().equals(command.username())) {
+            throw new IllegalArgumentException("Only the expense creator can cancel it");
+        }
+        expenseRepository.save(expense.cancel());
     }
 }

@@ -49,6 +49,36 @@ public class ExpensesNotificationService {
         return created;
     }
 
+    @Transactional
+    public int createManualOverdueReminders(Long groupId, Long memberId) {
+        var today = LocalDate.now();
+        var created = 0;
+
+        for (Payment payment : paymentRepository.findOverduePaymentsByGroupIdAndUserId(groupId, memberId, today)) {
+            var expense = payment.getExpense();
+            var dueDate = expense.getDueDate();
+            var amountPaid = payment.getAmountPaid() == null ? BigDecimal.ZERO : payment.getAmountPaid();
+            var pendingAmount = payment.getAmount().subtract(amountPaid);
+            var title = "Pago vencido";
+            var body = "Grupo " + expense.getGroup().getName()
+                    + ": tienes S/ " + formatAmount(pendingAmount)
+                    + " pendientes por \"" + expense.getName()
+                    + "\" desde el " + dueDate.format(DATE_FORMATTER) + ".";
+
+            var reminder = reminderRepository.saveAndFlush(new PaymentReminder(
+                    payment.getUser(),
+                    payment,
+                    PaymentReminderType.OVERDUE_MANUAL,
+                    title,
+                    body
+            ));
+            fcmNotificationService.sendPaymentReminder(reminder);
+            created++;
+        }
+
+        return created;
+    }
+
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public int notifyExpenseAssigned(Payment eventPayment) {
         var payment = paymentRepository.findById(eventPayment.getId())
@@ -116,7 +146,8 @@ public class ExpensesNotificationService {
         var title = switch (type) {
             case DUE_IN_48_HOURS -> "Tu pago vence en 48 horas";
             case DUE_TODAY -> "Tu pago vence hoy";
-            case EXPENSE_ASSIGNED, PAYMENT_REGISTERED -> throw new IllegalArgumentException("Unsupported reminder type");
+            case EXPENSE_ASSIGNED, PAYMENT_REGISTERED, OVERDUE_MANUAL ->
+                    throw new IllegalArgumentException("Unsupported reminder type");
         };
         var body = switch (type) {
             case DUE_IN_48_HOURS -> "Grupo " + group.getName()
@@ -126,7 +157,8 @@ public class ExpensesNotificationService {
                     + ": tu pago de S/ " + formatAmount(pendingAmount)
                     + " vence hoy (" + dueDate.format(DATE_FORMATTER)
                     + "). Un pago tardio afectara tu score de reputacion.";
-            case EXPENSE_ASSIGNED, PAYMENT_REGISTERED -> throw new IllegalArgumentException("Unsupported reminder type");
+            case EXPENSE_ASSIGNED, PAYMENT_REGISTERED, OVERDUE_MANUAL ->
+                    throw new IllegalArgumentException("Unsupported reminder type");
         };
 
         var reminder = reminderRepository.saveAndFlush(new PaymentReminder(payment.getUser(), payment, type, title, body));
