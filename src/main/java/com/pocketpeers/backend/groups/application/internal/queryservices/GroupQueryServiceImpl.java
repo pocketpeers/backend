@@ -4,6 +4,7 @@ import com.pocketpeers.backend.groups.domain.model.aggregates.Group;
 import com.pocketpeers.backend.groups.domain.model.queries.GetAllGroupsByUserIdQuery;
 import com.pocketpeers.backend.groups.domain.model.queries.GetAllGroupsQuery;
 import com.pocketpeers.backend.groups.domain.model.queries.GetGroupByIdQuery;
+import com.pocketpeers.backend.groups.domain.model.queries.SearchGroupsByNameQuery;
 import com.pocketpeers.backend.groups.domain.services.GroupQueryService;
 import com.pocketpeers.backend.groups.infrastructure.persistence.jpa.repositories.GroupMemberRepository;
 import com.pocketpeers.backend.groups.infrastructure.persistence.jpa.repositories.GroupRepository;
@@ -36,5 +37,12 @@ public class GroupQueryServiceImpl implements GroupQueryService {
         return groupRepository.findAllByUserId(query.userId());
     }
 
+    @Override
+    public List<Group> handle(SearchGroupsByNameQuery query) {
+        if (query.name() == null || query.name().trim().isEmpty()) {
+            return List.of();
+        }
+        return groupRepository.findAllByNameContainingIgnoreCase(query.name().trim());
+    }
 
 }

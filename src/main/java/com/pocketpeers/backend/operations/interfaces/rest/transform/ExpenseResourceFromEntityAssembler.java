@@ -5,16 +5,22 @@ import com.pocketpeers.backend.operations.interfaces.rest.resources.ExpenseResou
 
 public class ExpenseResourceFromEntityAssembler {
     public static ExpenseResource toResourceFromEntity(Expense expense){
+        return toResourceFromEntity(expense, "");
+    }
+
+    public static ExpenseResource toResourceFromEntity(Expense expense, String blockchainHash){
         return new ExpenseResource(
                 expense.getId(),
                 expense.getName(),
                 expense.getAmount(),
-                expense.getUserInformation().getId(),
+                expense.getUser().getId(),
                 expense.getGroup().getId(),
                 expense.getDueDate(),
                 expense.getRemainingAmount(),
                 expense.getTotalPaidAmount(),
                 expense.getStatus(),
+                expense.getActive(),
+                blockchainHash,
                 expense.getCreatedAt(),
                 expense.getUpdatedAt());
     }

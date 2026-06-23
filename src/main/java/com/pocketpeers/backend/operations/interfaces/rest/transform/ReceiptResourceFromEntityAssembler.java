@@ -11,10 +11,21 @@ public class ReceiptResourceFromEntityAssembler {
                 receipt.getId(),
                 receipt.getName(),
                 receipt.getReceiptNumber(),
-                receipt.getAmount().amount(),
+                receipt.getAmount(),
                 receipt.getIssueDate(),
                 receipt.getImagePath()
         );
     }
 
+    public static ReceiptOcrResource toResourceFromEntity(OcrReceipt receipt) {
+        return new ReceiptOcrResource(
+                receipt.getId(),
+                receipt.getName(),
+                receipt.getReceiptNumber(),
+                receipt.getAmount(),
+                receipt.getIssueDate(),
+                receipt.getImagePath(),
+                receipt.getOcrData().dataFields()
+        );
+    }
 }

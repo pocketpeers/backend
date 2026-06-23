@@ -3,6 +3,7 @@ package com.pocketpeers.backend.operations.infrastructure.persistence.jpa.reposi
 import com.pocketpeers.backend.groups.domain.model.valueobjects.GroupRole;
 import com.pocketpeers.backend.operations.domain.model.aggregates.Payment;
 import com.pocketpeers.backend.operations.domain.model.valueobjects.PaymentStatus;
+import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -10,13 +11,82 @@ import org.springframework.stereotype.Repository;
 
 import java.util.List;
 import java.util.Optional;
+import java.time.LocalDate;
 
 @Repository
 public interface PaymentRepository extends JpaRepository<Payment, Long> {
-    List<Payment> findAllByUserInformationId(Long userInformationId);
+    @EntityGraph(attributePaths = {"evidences", "expense", "expense.group", "expense.user", "user"})
+    Optional<Payment> findById(Long id);
+
+    List<Payment> findAllByUser_Id(Long userId);
+    @EntityGraph(attributePaths = {"evidences", "expense", "expense.group", "expense.user", "user"})
     List<Payment> findAllByExpenseId(Long expenseId);
-    List<Payment> findAllByUserInformationIdAndStatus(Long userInformationId, PaymentStatus status);
-    Optional<Payment> findByUserInformationIdAndExpenseId(Long userInformationId, Long expenseId);
+    List<Payment> findAllByUser_IdAndStatus(Long userId, PaymentStatus status);
+    Optional<Payment> findByUser_IdAndExpenseId(Long userId, Long expenseId);
+
+    @EntityGraph(attributePaths = {"expense", "expense.group", "user"})
+    @Query("""
+    SELECT p
+    FROM Payment p
+    JOIN p.expense e
+    WHERE e.dueDate.dueDate = :dueDate
+      AND (e.active IS NULL OR e.active = 1)
+      AND p.amountPaid < p.amount
+""")
+    List<Payment> findUnpaidPaymentsDueOn(@Param("dueDate") LocalDate dueDate);
+
+    @EntityGraph(attributePaths = {"expense", "expense.group", "user", "user.userInformation"})
+    @Query("""
+    SELECT p
+    FROM Payment p
+    JOIN p.expense e
+    WHERE e.group.id = :groupId
+      AND (e.active IS NULL OR e.active = 1)
+      AND e.dueDate.dueDate < :today
+      AND p.amountPaid < p.amount
+    ORDER BY e.dueDate.dueDate ASC
+""")
+    List<Payment> findOverduePaymentsByGroupId(@Param("groupId") Long groupId,
+                                                @Param("today") LocalDate today);
+
+    @EntityGraph(attributePaths = {"expense", "expense.group", "user", "user.userInformation"})
+    @Query("""
+    SELECT p
+    FROM Payment p
+    JOIN p.expense e
+    WHERE e.group.id = :groupId
+      AND p.user.id = :userId
+      AND (e.active IS NULL OR e.active = 1)
+      AND e.dueDate.dueDate < :today
+      AND p.amountPaid < p.amount
+    ORDER BY e.dueDate.dueDate ASC
+""")
+    List<Payment> findOverduePaymentsByGroupIdAndUserId(@Param("groupId") Long groupId,
+                                                         @Param("userId") Long userId,
+                                                         @Param("today") LocalDate today);
+
+    @Query("""
+    SELECT COUNT(p)
+    FROM Payment p
+    JOIN p.expense e
+    WHERE p.user.id = :userId
+      AND (e.active IS NULL OR e.active = 1)
+      AND e.dueDate.dueDate <= :date
+      AND (p.confirmed = false OR p.amountPaid < p.amount)
+""")
+    long countPendingPaymentsByUserIdDueOnOrBefore(@Param("userId") Long userId, @Param("date") LocalDate date);
+
+    @Query("""
+    SELECT CASE WHEN COUNT(p) > 0 THEN true ELSE false END
+    FROM Payment p
+    JOIN p.expense e
+    WHERE p.user.id = :userId
+      AND (e.active IS NULL OR e.active = 1)
+      AND e.dueDate.dueDate BETWEEN :startDate AND :endDate
+""")
+    boolean existsPaymentDueForUserBetween(@Param("userId") Long userId,
+                                           @Param("startDate") LocalDate startDate,
+                                           @Param("endDate") LocalDate endDate);
 
     /**
      * Obtiene pagos de gastos donde el usuario es administrador del grupo relacionado.
@@ -27,8 +97,9 @@ public interface PaymentRepository extends JpaRepository<Payment, Long> {
     JOIN p.expense e 
     JOIN e.group g 
     JOIN GroupMember gm ON gm.group.id = g.id 
-    WHERE gm.userInformation.id = :userInformationId 
-      AND gm.role = :role AND p.userInformation.id != :userInformationId
-""")    List<Payment> findIncomingPaymentsByUserInformation(@Param("userInformationId") Long userInformationId, @Param("role") GroupRole role);
+    WHERE gm.user.id = :user 
+      AND (e.active IS NULL OR e.active = 1)
+      AND gm.role = :role AND p.user.id != :user
+""")    List<Payment> findIncomingPaymentsByUser(@Param("user") Long user, @Param("role") GroupRole role);
 
 }

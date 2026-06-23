@@ -1,11 +1,11 @@
 package com.pocketpeers.backend.operations.domain.model.entities;
 
-import com.pocketpeers.backend.operations.domain.model.valueobjects.Amount;
 import com.pocketpeers.backend.shared.domain.model.entities.AuditableModel;
 import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.Setter;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 
 @Setter
@@ -17,18 +17,19 @@ public abstract class Receipt extends AuditableModel {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Embedded
-    private Amount amount;
+    private BigDecimal amount;
     private String name;
     private String receiptNumber;
     private LocalDate issueDate;
     private String imagePath;
     private Boolean isActive = true;
 
+    @OneToOne(mappedBy = "originalReceipt", cascade = CascadeType.ALL, orphanRemoval = true)
+    private OcrReceipt ocrReceipt;
 
     public Receipt(){};
 
-    public Receipt(String name,Amount amount, LocalDate issueDate, String imagePath, String receiptNumber) {
+    public Receipt(String name, BigDecimal amount, LocalDate issueDate, String imagePath, String receiptNumber) {
         this.name = name;
         this.amount = amount;
         this.issueDate = issueDate;
@@ -36,7 +37,7 @@ public abstract class Receipt extends AuditableModel {
         this.receiptNumber = receiptNumber;
     };
 
-    public Receipt(String name,Amount amount, LocalDate issueDate, String imagePath) {
+    public Receipt(String name, BigDecimal amount, LocalDate issueDate, String imagePath) {
         this.name = name;
         this.amount = amount;
         this.issueDate = issueDate;

@@ -43,25 +43,6 @@ public class ReceiptController {
         return ResponseEntity.ok(receiptResouce);
     }
 
-    @GetMapping("/payment/{paymentId}")
-    @Operation(summary = "Get all receipts by paymentId")
-    public ResponseEntity<List<ReceiptResource>> getReceiptsByPaymentId(@PathVariable Long paymentId){
-        var query = new GetAllReceiptsByPaymentIdQuery(paymentId);
-        var receipts = receiptQueryService.handle(query);
-        var receiptsResources = receipts.stream().map(ReceiptResourceFromEntityAssembler::toResourceFromEntity).toList();
-        return ResponseEntity.ok(receiptsResources);
-    }
-
-    @PostMapping("/payment")
-    @Operation(summary = "Create a new receipt for a payment")
-    public ResponseEntity<ReceiptResource> createPaymentReceipt(@Validated @RequestBody CreatePaymentReceiptResource resource){
-        var command = CreateReceiptCommandFromResourceAssembler.toCommandFromResource(resource);
-        var receipt = receiptCommandService.handle(command);
-        var receiptResouce = ReceiptResourceFromEntityAssembler.toResourceFromEntity(receipt);
-
-        return new ResponseEntity(receiptResouce, HttpStatus.CREATED);
-    }
-
     @GetMapping("/expense/{expenseId}")
     @Operation(summary = "Get all receipts by expenseId")
     public ResponseEntity<List<ReceiptResource>> getReceiptsByExpenseId(@PathVariable Long expenseId){
