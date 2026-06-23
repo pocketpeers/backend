@@ -11,6 +11,7 @@ import com.pocketpeers.backend.groups.domain.services.GroupQueryService;
 import com.pocketpeers.backend.groups.infrastructure.persistence.jpa.repositories.GroupMemberRepository;
 import com.pocketpeers.backend.groups.interfaces.rest.resources.CreateGroupResource;
 import com.pocketpeers.backend.groups.interfaces.rest.resources.GroupResource;
+import com.pocketpeers.backend.groups.interfaces.rest.resources.ManualOverdueReminderResource;
 import com.pocketpeers.backend.groups.interfaces.rest.resources.OverdueMemberResource;
 import com.pocketpeers.backend.groups.interfaces.rest.resources.OverduePaymentDebtResource;
 import com.pocketpeers.backend.groups.interfaces.rest.resources.UpdateGroupImageResource;
@@ -18,6 +19,7 @@ import com.pocketpeers.backend.groups.interfaces.rest.resources.UpdateGroupResou
 import com.pocketpeers.backend.groups.interfaces.rest.transform.CreateGroupCommandFromResourceAssembler;
 import com.pocketpeers.backend.groups.interfaces.rest.transform.GroupResourceFromEntityAssembler;
 import com.pocketpeers.backend.operations.domain.model.aggregates.Payment;
+import com.pocketpeers.backend.operations.domain.services.ExpensesNotificationService;
 import com.pocketpeers.backend.operations.infrastructure.persistence.jpa.repositories.PaymentRepository;
 import com.pocketpeers.backend.users.domain.model.aggregates.UserInformation;
 import com.pocketpeers.backend.users.infrastructure.persistence.jpa.repositories.UserRepository;
@@ -49,15 +51,18 @@ public class GroupController {
     private final GroupMemberRepository groupMemberRepository;
     private final UserRepository userRepository;
     private final PaymentRepository paymentRepository;
+    private final ExpensesNotificationService expensesNotificationService;
 
     public GroupController(GroupCommandService groupCommandService, GroupQueryService groupQueryService,
                            GroupMemberRepository groupMemberRepository, UserRepository userRepository,
-                           PaymentRepository paymentRepository) {
+                           PaymentRepository paymentRepository,
+                           ExpensesNotificationService expensesNotificationService) {
         this.groupCommandService = groupCommandService;
         this.groupQueryService = groupQueryService;
         this.groupMemberRepository = groupMemberRepository;
         this.userRepository = userRepository;
         this.paymentRepository = paymentRepository;
+        this.expensesNotificationService = expensesNotificationService;
     }
 
     @Operation(summary = "Create a new group")
@@ -197,6 +202,24 @@ public class GroupController {
                 .toList();
 
         return ResponseEntity.ok(resources);
+    }
+
+    @Operation(summary = "Send a manual overdue reminder to a group member")
+    @PostMapping("/{groupId}/overdue-members/{memberId}/reminder")
+    public ResponseEntity<ManualOverdueReminderResource> sendManualOverdueReminder(
+            @PathVariable Long groupId,
+            @PathVariable Long memberId,
+            Authentication authentication
+    ) {
+        if (!isAuthenticatedGroupAdmin(groupId, authentication)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+        }
+
+        var created = expensesNotificationService.createManualOverdueReminders(groupId, memberId);
+        var message = created == 0
+                ? "No overdue payments found for this member"
+                : "Manual overdue reminder created";
+        return ResponseEntity.ok(new ManualOverdueReminderResource(memberId, created, false, message));
     }
 
     private boolean isAuthenticatedGroupAdmin(Long groupId, Authentication authentication) {
