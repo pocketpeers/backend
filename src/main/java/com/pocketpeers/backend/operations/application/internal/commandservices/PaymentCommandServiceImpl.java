@@ -12,6 +12,7 @@ import com.pocketpeers.backend.operations.domain.model.events.PaymentUpdatedEven
 import com.pocketpeers.backend.operations.domain.model.valueobjects.PaymentStatus;
 import com.pocketpeers.backend.operations.domain.services.PaymentCommandService;
 import com.pocketpeers.backend.operations.infrastructure.persistence.jpa.repositories.ExpenseRepository;
+import com.pocketpeers.backend.operations.infrastructure.persistence.jpa.repositories.PaymentEvidenceRepository;
 import com.pocketpeers.backend.operations.infrastructure.persistence.jpa.repositories.PaymentRepository;
 import com.pocketpeers.backend.pbl.domain.model.commands.RegisterReputationEventCommand;
 import com.pocketpeers.backend.pbl.domain.model.valueobjects.ReputationEventType;
@@ -34,17 +35,20 @@ public class PaymentCommandServiceImpl implements PaymentCommandService {
 
     private final PaymentRepository paymentRepository;
     private final ExpenseRepository expenseRepository;
+    private final PaymentEvidenceRepository paymentEvidenceRepository;
     private final UserRepository userRepository;
     private final ApplicationEventPublisher applicationEventPublisher;
     private final PblCommandService pblCommandService;
     private final ReputationEventRepository reputationEventRepository;
 
     public PaymentCommandServiceImpl(PaymentRepository paymentRepository, ExpenseRepository expenseRepository,
+                                     PaymentEvidenceRepository paymentEvidenceRepository,
                                      UserRepository userRepository, ApplicationEventPublisher applicationEventPublisher,
                                      PblCommandService pblCommandService,
                                      ReputationEventRepository reputationEventRepository) {
         this.paymentRepository = paymentRepository;
         this.expenseRepository = expenseRepository;
+        this.paymentEvidenceRepository = paymentEvidenceRepository;
         this.userRepository = userRepository;
         this.applicationEventPublisher = applicationEventPublisher;
         this.pblCommandService = pblCommandService;
@@ -78,8 +82,11 @@ public class PaymentCommandServiceImpl implements PaymentCommandService {
                 throw new RuntimeException("Completed confirmed payments cannot be modified");
             }
             payment.pay(command.amount());
-            PaymentEvidence evidence = new PaymentEvidence(payment, command.photo());
-            payment.addEvidence(evidence);
+            if (command.photo() != null && !command.photo().isBlank()) {
+                PaymentEvidence evidence = new PaymentEvidence(payment, command.photo());
+                payment.addEvidence(evidence);
+                paymentEvidenceRepository.save(evidence);
+            }
             paymentRepository.save(payment);
             applicationEventPublisher.publishEvent(new PaymentUpdatedEvent(payment));
             return payment.getId();
