@@ -19,6 +19,7 @@ public interface PaymentRepository extends JpaRepository<Payment, Long> {
     Optional<Payment> findById(Long id);
 
     List<Payment> findAllByUser_Id(Long userId);
+    @EntityGraph(attributePaths = {"evidences", "expense", "expense.group", "expense.user", "user"})
     List<Payment> findAllByExpenseId(Long expenseId);
     List<Payment> findAllByUser_IdAndStatus(Long userId, PaymentStatus status);
     Optional<Payment> findByUser_IdAndExpenseId(Long userId, Long expenseId);
@@ -33,6 +34,36 @@ public interface PaymentRepository extends JpaRepository<Payment, Long> {
       AND p.amountPaid < p.amount
 """)
     List<Payment> findUnpaidPaymentsDueOn(@Param("dueDate") LocalDate dueDate);
+
+    @EntityGraph(attributePaths = {"expense", "expense.group", "user", "user.userInformation"})
+    @Query("""
+    SELECT p
+    FROM Payment p
+    JOIN p.expense e
+    WHERE e.group.id = :groupId
+      AND (e.active IS NULL OR e.active = 1)
+      AND e.dueDate.dueDate < :today
+      AND p.amountPaid < p.amount
+    ORDER BY e.dueDate.dueDate ASC
+""")
+    List<Payment> findOverduePaymentsByGroupId(@Param("groupId") Long groupId,
+                                                @Param("today") LocalDate today);
+
+    @EntityGraph(attributePaths = {"expense", "expense.group", "user", "user.userInformation"})
+    @Query("""
+    SELECT p
+    FROM Payment p
+    JOIN p.expense e
+    WHERE e.group.id = :groupId
+      AND p.user.id = :userId
+      AND (e.active IS NULL OR e.active = 1)
+      AND e.dueDate.dueDate < :today
+      AND p.amountPaid < p.amount
+    ORDER BY e.dueDate.dueDate ASC
+""")
+    List<Payment> findOverduePaymentsByGroupIdAndUserId(@Param("groupId") Long groupId,
+                                                         @Param("userId") Long userId,
+                                                         @Param("today") LocalDate today);
 
     @Query("""
     SELECT COUNT(p)
