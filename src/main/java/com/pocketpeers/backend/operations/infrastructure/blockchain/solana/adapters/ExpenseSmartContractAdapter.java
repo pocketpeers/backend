@@ -9,7 +9,6 @@ import com.pocketpeers.backend.operations.domain.model.valueobjects.PaymentStatu
 import com.pocketpeers.backend.operations.domain.model.valueobjects.TransactionHash;
 import com.pocketpeers.backend.operations.domain.ports.out.ExpenseSmartContractPort;
 import com.pocketpeers.backend.operations.infrastructure.blockchain.solana.services.SolanaClient;
-import com.pocketpeers.backend.operations.infrastructure.blockchain.solana.utils.SecurityUtils;
 import com.pocketpeers.backend.operations.infrastructure.persistence.jpa.repositories.ContractTransactionRepository;
 import com.pocketpeers.backend.operations.infrastructure.persistence.jpa.repositories.ExpenseContractRepository;
 import jakarta.transaction.Transactional;
