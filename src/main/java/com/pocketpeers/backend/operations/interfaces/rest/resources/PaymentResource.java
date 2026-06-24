@@ -11,6 +11,7 @@ public record PaymentResource(Long id,
                               Boolean confirmed,
                               Long userId,
                               Long expenseId,
+                              String blockchainHash,
                               List<String> evidencePhotos
 ) {
 }

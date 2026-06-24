@@ -9,6 +9,10 @@ public class PaymentResourceFromEntityAssembler {
     }
 
     public static PaymentResource toResourceFromEntity(Payment payment, boolean includeEvidence) {
+        return toResourceFromEntity(payment, includeEvidence, "");
+    }
+
+    public static PaymentResource toResourceFromEntity(Payment payment, boolean includeEvidence, String blockchainHash) {
         return new PaymentResource(
                 payment.getId(),
                 payment.getDescription(),
@@ -18,6 +22,7 @@ public class PaymentResourceFromEntityAssembler {
                 payment.getConfirmed(),
                 payment.getUser().getId(),
                 payment.getExpense().getId(),
+                blockchainHash,
                 includeEvidence
                         ? payment.getEvidences().stream()
                                 .map(evidence -> evidence.getPhoto())

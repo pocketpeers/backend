@@ -12,6 +12,5 @@ import java.util.List;
 public interface ReputationEventRepository extends JpaRepository<ReputationEvent, Long> {
     List<ReputationEvent> findAllByUser_IdAndOccurredAtAfterOrderByOccurredAtAsc(Long userId, LocalDateTime from);
     List<ReputationEvent> findAllByUser_IdAndOccurredAtAfterOrderByOccurredAtDesc(Long userId, LocalDateTime from);
-    boolean existsByPaymentId(Long paymentId);
     boolean existsByPaymentIdAndType(Long paymentId, ReputationEventType type);
 }

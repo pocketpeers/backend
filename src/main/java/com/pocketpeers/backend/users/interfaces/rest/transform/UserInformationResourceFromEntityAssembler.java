@@ -5,6 +5,6 @@ import com.pocketpeers.backend.users.interfaces.rest.resources.UserInformationRe
 
 public class UserInformationResourceFromEntityAssembler {
     public static UserInformationResource toResourceFromEntity(UserInformation userInformation) {
-        return new UserInformationResource(userInformation.getId(), userInformation.getFullName(), userInformation.getPhoneNumber(), userInformation.getPhoto(), userInformation.getEmailAddress(), userInformation.getUser().getId());
+        return new UserInformationResource(userInformation.getId(), userInformation.getUser().getUsername(), userInformation.getFullName(), userInformation.getPhoneNumber(), userInformation.getPhoto(), userInformation.getEmailAddress(), userInformation.getUser().getId());
     }
 }

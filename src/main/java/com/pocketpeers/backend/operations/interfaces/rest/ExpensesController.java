@@ -13,6 +13,7 @@ import com.pocketpeers.backend.operations.domain.services.ExpenseCommandService;
 import com.pocketpeers.backend.operations.domain.services.ExpenseQueryService;
 import com.pocketpeers.backend.operations.domain.services.PaymentCommandService;
 import com.pocketpeers.backend.operations.domain.services.PaymentQueryService;
+import com.pocketpeers.backend.operations.infrastructure.persistence.jpa.repositories.ContractTransactionRepository;
 import com.pocketpeers.backend.operations.interfaces.rest.resources.CreateExpenseResource;
 import com.pocketpeers.backend.operations.interfaces.rest.resources.CreateExpenseWithPaymentsResource;
 import com.pocketpeers.backend.operations.interfaces.rest.resources.ExpenseResource;
@@ -48,15 +49,18 @@ public class ExpensesController {
     private final PaymentCommandService paymentCommandService;
     private final PaymentQueryService paymentQueryService;
     private final UserRepository userRepository;
+    private final ContractTransactionRepository contractTransactionRepository;
 
     public ExpensesController(ExpenseQueryService expenseQueryService, ExpenseCommandService expenseCommandService,
                               PaymentCommandService paymentCommandService, PaymentQueryService paymentQueryService,
-                              UserRepository userRepository) {
+                              UserRepository userRepository,
+                              ContractTransactionRepository contractTransactionRepository) {
         this.expenseQueryService = expenseQueryService;
         this.expenseCommandService = expenseCommandService;
         this.paymentCommandService = paymentCommandService;
         this.paymentQueryService = paymentQueryService;
         this.userRepository = userRepository;
+        this.contractTransactionRepository = contractTransactionRepository;
     }
 
     @PostMapping
@@ -74,7 +78,7 @@ public class ExpensesController {
         //var expense = expenseQueryService.handle(getExpenseByNameAndUserId);
         //if (expense.isEmpty()) return ResponseEntity.badRequest().build();
         if (expenseId.isEmpty()) return ResponseEntity.badRequest().build();
-        var expenseResource = ExpenseResourceFromEntityAssembler.toResourceFromEntity(expenseId.get());
+        var expenseResource = toExpenseResource(expenseId.get());
         return new ResponseEntity<>(expenseResource, HttpStatus.CREATED);
     }
 
@@ -113,11 +117,11 @@ public class ExpensesController {
             var paymentId = paymentCommandService.handle(command);
             var payment = paymentQueryService.handle(new GetPaymentByIdQuery(paymentId))
                     .orElseThrow(() -> new IllegalArgumentException("Payment could not be created"));
-            paymentResources.add(PaymentResourceFromEntityAssembler.toResourceFromEntity(payment));
+            paymentResources.add(toPaymentResource(payment));
         }
 
         var response = new ExpenseWithPaymentsResource(
-                ExpenseResourceFromEntityAssembler.toResourceFromEntity(expense),
+                toExpenseResource(expense),
                 paymentResources
         );
         return new ResponseEntity<>(response, HttpStatus.CREATED);
@@ -136,7 +140,7 @@ public class ExpensesController {
         var getExpenseByIdQuery = new GetExpenseByIdQuery(expenseId);
         var expense = expenseQueryService.handle(getExpenseByIdQuery);
         if (expense.isEmpty()) return ResponseEntity.badRequest().build();
-        var expenseResource = ExpenseResourceFromEntityAssembler.toResourceFromEntity(expense.get());
+        var expenseResource = toExpenseResource(expense.get());
         return ResponseEntity.ok(expenseResource);
     }
 
@@ -144,7 +148,7 @@ public class ExpensesController {
     public ResponseEntity<List<ExpenseResource>> getExpensesByUserId(@PathVariable Long userId) {
         var getAllExpensesByUserIdQuery = new GetAllExpensesByUserIdQuery(userId);
         var expenses = expenseQueryService.handle(getAllExpensesByUserIdQuery);
-        var expenseResources = expenses.stream().map(ExpenseResourceFromEntityAssembler::toResourceFromEntity).toList();
+        var expenseResources = expenses.stream().map(this::toExpenseResource).toList();
         return ResponseEntity.ok(expenseResources);
     }
 
@@ -152,14 +156,14 @@ public class ExpensesController {
     public ResponseEntity<List<ExpenseResource>> getAllExpenses() {
         var getAllExpensesQuery = new GetAllExpensesQuery();
         var expenses = expenseQueryService.handle(getAllExpensesQuery);
-        var expensesResources = expenses.stream().map(ExpenseResourceFromEntityAssembler::toResourceFromEntity).collect(Collectors.toList());
+        var expensesResources = expenses.stream().map(this::toExpenseResource).collect(Collectors.toList());
         return ResponseEntity.ok(expensesResources);
     }
 
     @GetMapping("/search")
     public ResponseEntity<List<ExpenseResource>> searchExpensesByName(@RequestParam String name) {
         var expenses = expenseQueryService.handle(new SearchExpensesByNameQuery(name));
-        var expenseResources = expenses.stream().map(ExpenseResourceFromEntityAssembler::toResourceFromEntity).toList();
+        var expenseResources = expenses.stream().map(this::toExpenseResource).toList();
         return ResponseEntity.ok(expenseResources);
     }
 
@@ -168,7 +172,7 @@ public class ExpensesController {
         var updateExpenseCommand = UpdateExpenseCommandFromResourceAssembler.toCommandFromResource(expenseId, updateExpenseResource);
         var updatedExpense = expenseCommandService.handle(updateExpenseCommand);
         if(updatedExpense.isEmpty()) return ResponseEntity.badRequest().build();
-        var expenseResource = ExpenseResourceFromEntityAssembler.toResourceFromEntity(updatedExpense.get());
+        var expenseResource = toExpenseResource(updatedExpense.get());
         return ResponseEntity.ok(expenseResource);
     }
 
@@ -176,15 +180,44 @@ public class ExpensesController {
     public ResponseEntity<List<ExpenseResource>> getExpensesByGroupId(@PathVariable Long groupId) {
         var getAllExpensesByGroupIdQuery = new GetAllExpensesByGroupIdQuery(groupId);
         var expenses = expenseQueryService.handle(getAllExpensesByGroupIdQuery);
-        var expenseResources = expenses.stream().map(ExpenseResourceFromEntityAssembler::toResourceFromEntity).toList();
+        var expenseResources = expenses.stream().map(this::toExpenseResource).toList();
         return ResponseEntity.ok(expenseResources);
     }
 
-    @DeleteMapping("expenseId/{expenseId}")
-    public ResponseEntity<Void> deleteExpense(@PathVariable Long expenseId) {
-        var deleteExpenseCommand = new DeleteExpenseCommand(expenseId);
+    @DeleteMapping("/{expenseId}")
+    public ResponseEntity<Void> deleteExpense(@PathVariable Long expenseId, Authentication authentication) {
+        var deleteExpenseCommand = new DeleteExpenseCommand(expenseId, authentication.getName());
         expenseCommandService.handle(deleteExpenseCommand);
         return ResponseEntity.noContent().build();
+    }
+
+    private ExpenseResource toExpenseResource(com.pocketpeers.backend.operations.domain.model.aggregates.Expense expense) {
+        return ExpenseResourceFromEntityAssembler.toResourceFromEntity(
+                expense,
+                expenseBlockchainHash(expense.getId())
+        );
+    }
+
+    private PaymentResource toPaymentResource(com.pocketpeers.backend.operations.domain.model.aggregates.Payment payment) {
+        return PaymentResourceFromEntityAssembler.toResourceFromEntity(
+                payment,
+                false,
+                paymentBlockchainHash(payment.getId())
+        );
+    }
+
+    private String expenseBlockchainHash(Long expenseId) {
+        return contractTransactionRepository
+                .findFirstByContract_Expense_IdAndPaymentIsNullOrderByCreatedAtDesc(expenseId)
+                .map(transaction -> transaction.getTransactionHash().hash())
+                .orElse("");
+    }
+
+    private String paymentBlockchainHash(Long paymentId) {
+        return contractTransactionRepository
+                .findFirstByPayment_IdOrderByCreatedAtDesc(paymentId)
+                .map(transaction -> transaction.getTransactionHash().hash())
+                .orElse("");
     }
 
 }

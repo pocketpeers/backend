@@ -15,6 +15,8 @@ public record ExpenseResource(Long id,
                               BigDecimal remainingAmount,
                               BigDecimal paidAmount,
                               String status,
+                              Integer active,
+                              String blockchainHash,
                               java.util.Date createdAt,
                               java.util.Date updatedAt) {
 }

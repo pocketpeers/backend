@@ -39,12 +39,15 @@ public class Expense extends AuditableAbstractAggregateRoot<Expense> {
     @OneToMany(mappedBy = "expense", cascade = CascadeType.ALL, orphanRemoval = true)
     private List<ExpenseReceipt> receipts = new ArrayList<>();
 
+    private Integer active = 1;
+
     public Expense(String name, BigDecimal amount, User user, Group group, LocalDate dueDate) {
         this.name = name;
         this.amount = amount;
         this.user = user;
         this.group = group;
         this.dueDate = new DueDate(dueDate);
+        this.active = 1;
     }
 
 
@@ -53,6 +56,9 @@ public class Expense extends AuditableAbstractAggregateRoot<Expense> {
 
 
     public Expense UpdateInformation(String newName, BigDecimal newAmount, LocalDate newDueDate) {
+        if (!isActive()) {
+            throw new IllegalStateException("Cancelled expenses cannot be updated");
+        }
         this.name = newName;
         this.amount = newAmount;
         this.dueDate = new DueDate(newDueDate);
@@ -69,6 +75,9 @@ public class Expense extends AuditableAbstractAggregateRoot<Expense> {
     }
 
     public String getStatus() {
+        if (!isActive()) {
+            return "cancelled";
+        }
         if (this.getTotalPaidAmount().equals(this.amount)) {
             return ExpenseStatus.COMPLETED.name().toLowerCase();
         } else {
@@ -89,5 +98,14 @@ public class Expense extends AuditableAbstractAggregateRoot<Expense> {
             }
         }
         return totalPaid;
+    }
+
+    public boolean isActive() {
+        return active == null || active == 1;
+    }
+
+    public Expense cancel() {
+        this.active = 0;
+        return this;
     }
 }
