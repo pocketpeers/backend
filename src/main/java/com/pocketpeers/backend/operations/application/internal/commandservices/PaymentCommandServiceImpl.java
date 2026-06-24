@@ -120,6 +120,9 @@ public class PaymentCommandServiceImpl implements PaymentCommandService {
 
     private void registerReputationEventForConfirmedPayment(Payment payment) {
         var type = reputationEventTypeFor(payment);
+        if (isOverdue(payment)) {
+            registerOverduePaymentPenaltyIfMissing(payment);
+        }
         if (!shouldSkipReputationEvent(payment, type)) {
             pblCommandService.handle(new RegisterReputationEventCommand(
                     payment.getUser().getId(),
@@ -132,11 +135,28 @@ public class PaymentCommandServiceImpl implements PaymentCommandService {
         registerTimingBadgeEvents(payment);
     }
 
+    private boolean isOverdue(Payment payment) {
+        return payment.getExpense().getDueDate().isBefore(LocalDate.now(LIMA_ZONE));
+    }
+
+    private void registerOverduePaymentPenaltyIfMissing(Payment payment) {
+        if (reputationEventRepository.existsByPaymentIdAndType(payment.getId(), ReputationEventType.OVERDUE_PAYMENT)) {
+            return;
+        }
+        pblCommandService.handle(new RegisterReputationEventCommand(
+                payment.getUser().getId(),
+                payment.getExpense().getGroup().getId(),
+                payment.getId(),
+                ReputationEventType.OVERDUE_PAYMENT,
+                "Payment became overdue before being completed"
+        ));
+    }
+
     private ReputationEventType reputationEventTypeFor(Payment payment) {
         if (payment.getStatus().equals("PARTIAL")) {
             return ReputationEventType.PARTIAL_PAYMENT;
         }
-        if (payment.getExpense().getDueDate().isBefore(LocalDate.now(LIMA_ZONE))) {
+        if (isOverdue(payment)) {
             return ReputationEventType.LATE_PAYMENT;
         }
         return ReputationEventType.ON_TIME_PAYMENT;
@@ -155,6 +175,7 @@ public class PaymentCommandServiceImpl implements PaymentCommandService {
     private boolean paymentHasCoreReputationEvent(Payment payment) {
         return reputationEventRepository.existsByPaymentIdAndType(payment.getId(), ReputationEventType.PARTIAL_PAYMENT)
                 || reputationEventRepository.existsByPaymentIdAndType(payment.getId(), ReputationEventType.ON_TIME_PAYMENT)
+                || reputationEventRepository.existsByPaymentIdAndType(payment.getId(), ReputationEventType.OVERDUE_PAYMENT)
                 || reputationEventRepository.existsByPaymentIdAndType(payment.getId(), ReputationEventType.LATE_PAYMENT);
     }
 
@@ -194,8 +215,9 @@ public class PaymentCommandServiceImpl implements PaymentCommandService {
     private String descriptionFor(ReputationEventType type) {
         return switch (type) {
             case PARTIAL_PAYMENT -> "Partial payment confirmed by expense creator";
+            case OVERDUE_PAYMENT -> "Payment became overdue before being completed";
             case ON_TIME_PAYMENT -> "Full payment confirmed in one installment";
-            case LATE_PAYMENT -> "Late full payment confirmed in one installment";
+            case LATE_PAYMENT -> "Late payment completed after overdue penalty";
             case MANUAL_ADJUSTMENT -> "Manual reputation adjustment";
             case EARLY_PAYMENT -> "Payment confirmed more than 48 hours before expense close";
             case GROUP_CREATED -> "Collaborative microfinance group created successfully";

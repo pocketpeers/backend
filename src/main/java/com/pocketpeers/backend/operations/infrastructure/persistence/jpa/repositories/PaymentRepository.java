@@ -35,6 +35,17 @@ public interface PaymentRepository extends JpaRepository<Payment, Long> {
 """)
     List<Payment> findUnpaidPaymentsDueOn(@Param("dueDate") LocalDate dueDate);
 
+    @EntityGraph(attributePaths = {"expense", "expense.group", "user"})
+    @Query("""
+    SELECT p
+    FROM Payment p
+    JOIN p.expense e
+    WHERE e.dueDate.dueDate < :today
+      AND (e.active IS NULL OR e.active = 1)
+      AND p.amountPaid < p.amount
+""")
+    List<Payment> findOverdueUnpaidPayments(@Param("today") LocalDate today);
+
     @EntityGraph(attributePaths = {"expense", "expense.group", "user", "user.userInformation"})
     @Query("""
     SELECT p

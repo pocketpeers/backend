@@ -19,7 +19,8 @@ import org.springframework.stereotype.Service;
 public class PblCommandServiceImpl implements PblCommandService {
     private static final int ON_TIME_PAYMENT_POINTS = 3;
     private static final int PARTIAL_PAYMENT_POINTS = 1;
-    private static final int LATE_PAYMENT_POINTS = -6;
+    private static final int OVERDUE_PAYMENT_POINTS = -6;
+    private static final int LATE_PAYMENT_POINTS = 1;
     private static final int GROUP_CREATED_POINTS = 0;
 
     private final UserRepository userRepository;
@@ -47,6 +48,7 @@ public class PblCommandServiceImpl implements PblCommandService {
         var resultingScore = reputation.applyDelta(delta);
         if (command.type() == ReputationEventType.ON_TIME_PAYMENT) reputation.registerOnTimePayment();
         if (command.type() == ReputationEventType.PARTIAL_PAYMENT) reputation.registerPartialPayment();
+        if (command.type() == ReputationEventType.OVERDUE_PAYMENT) reputation.registerOverduePayment();
         if (command.type() == ReputationEventType.LATE_PAYMENT) reputation.registerLatePayment();
         userReputationRepository.save(reputation);
         unlockBadges(reputation, command.type());
@@ -75,6 +77,7 @@ public class PblCommandServiceImpl implements PblCommandService {
         return switch (type) {
             case ON_TIME_PAYMENT -> ON_TIME_PAYMENT_POINTS;
             case PARTIAL_PAYMENT -> PARTIAL_PAYMENT_POINTS;
+            case OVERDUE_PAYMENT -> OVERDUE_PAYMENT_POINTS;
             case LATE_PAYMENT -> LATE_PAYMENT_POINTS;
             case GROUP_CREATED -> GROUP_CREATED_POINTS;
             case MANUAL_ADJUSTMENT, EARLY_PAYMENT, JUST_IN_TIME_PAYMENT, ZERO_DEBT -> 0;

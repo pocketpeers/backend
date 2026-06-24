@@ -45,8 +45,11 @@ public class UserReputation extends AuditableAbstractAggregateRoot<UserReputatio
     public void registerPartialPayment() {
     }
 
-    public void registerLatePayment() {
+    public void registerOverduePayment() {
         this.onTimePaymentStreak = 0;
+    }
+
+    public void registerLatePayment() {
         this.completedPayments++;
     }
 
