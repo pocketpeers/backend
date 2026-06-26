@@ -1,13 +1,15 @@
 package com.pocketpeers.backend;
 
-import org.junit.jupiter.api.Test;
-import org.springframework.boot.test.context.SpringBootTest;
+import static org.assertj.core.api.Assertions.assertThat;
 
-@SpringBootTest
+import org.junit.jupiter.api.Test;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+
 class BackendApplicationTests {
 
     @Test
-    void contextLoads() {
+    void applicationClassIsSpringBootApplication() {
+        assertThat(BackendApplication.class).hasAnnotation(SpringBootApplication.class);
     }
 
 }
