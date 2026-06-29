@@ -22,6 +22,9 @@ import org.springframework.transaction.event.TransactionalEventListener;
 @AllArgsConstructor
 public class ExpenseContractEventHandler {
     private static final Logger LOGGER = LoggerFactory.getLogger(ExpenseContractEventHandler.class);
+    // Payments can be created almost at the same time as the expense. These
+    // retries give the expense contract enough time to be deployed before the
+    // payment account is registered on-chain.
     private static final int PAYMENT_CONTRACT_SYNC_ATTEMPTS = 30;
     private static final long PAYMENT_CONTRACT_SYNC_DELAY_MILLIS = 2_000;
 
@@ -33,6 +36,9 @@ public class ExpenseContractEventHandler {
     @Async
     public void handler(ExpenseCreatedEvent event) {
         try {
+            // Contract deployment is intentionally outside the original expense
+            // transaction. A blockchain failure should not roll back the expense
+            // stored in the application database.
             LOGGER.info("Handling ExpenseCreatedEvent for expense: {}", event.expense().getName());
 
             ContractAddress contractAddress = expenseSmartContractPort.deployExpenseContract(event.expense());
@@ -51,6 +57,8 @@ public class ExpenseContractEventHandler {
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
     @Async
     public void handler(PaymentCreatedEvent event) {
+        // If the expense contract is not ready yet, the ExpenseCreatedEvent
+        // path will sync all existing payments once deployment finishes.
         if (expenseContractRepository.findByExpense(event.payment().getExpense()).isEmpty()) {
             LOGGER.info(
                     "Payment contract sync skipped until expense contract exists. paymentId={}, expenseId={}",
@@ -63,6 +71,8 @@ public class ExpenseContractEventHandler {
     }
 
     private void syncExistingPaymentsForExpense(Long expenseId) {
+        // Handles payments that were persisted before Solana finished creating
+        // the expense PDA.
         var payments = paymentRepository.findAllByExpenseId(expenseId);
         for (var payment : payments) {
             syncPayment(payment);
@@ -97,6 +107,8 @@ public class ExpenseContractEventHandler {
     @Async
     public void handler(PaymentUpdatedEvent event) {
         try {
+            // Keep the on-chain payment state aligned with local confirmation
+            // and amount-paid changes after the database commit succeeds.
             TransactionHash transactionHash = expenseSmartContractPort.updatePaymentStatus(
                     event.payment(),
                     PaymentStatus.valueOf(event.payment().getStatus())
