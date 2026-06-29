@@ -50,6 +50,8 @@ public class PblQueryServiceImpl implements PblQueryService {
 
     @Override
     public UserReputation handle(GetUserReputationQuery query) {
+        // Reputation is created lazily so older users or freshly registered
+        // users can be shown in PBL screens before receiving their first event.
         var user = userRepository.findById(query.userId()).orElseThrow(() -> new RuntimeException("User not found"));
         return userReputationRepository.findByUser_Id(query.userId()).orElseGet(() -> userReputationRepository.save(new UserReputation(user)));
     }
@@ -72,6 +74,8 @@ public class PblQueryServiceImpl implements PblQueryService {
 
     @Override
     public List<LeaderboardEntryResource> handle(GetGroupLeaderboardQuery query) {
+        // Leaderboards are group-private: the requester must be a member before
+        // seeing other members' public reputation data.
         if (!groupMemberRepository.findByGroupIdAndUser_Id(query.groupId(), query.viewerUserId()).isPresent()) {
             throw new RuntimeException("Access denied to group leaderboard");
         }
@@ -94,6 +98,8 @@ public class PblQueryServiceImpl implements PblQueryService {
                         .thenComparing(Comparator.comparingLong(DraftLeaderboardEntry::unlockedBadges).reversed()))
                 .toList();
 
+        // Rank is assigned after sorting so ties still receive a deterministic
+        // position based on score first and unlocked badges second.
         var counter = new AtomicInteger(0);
         return entries.stream()
                 .map(entry -> new LeaderboardEntryResource(entry.userId(), entry.fullName(), entry.photo(),
@@ -111,6 +117,8 @@ public class PblQueryServiceImpl implements PblQueryService {
     }
 
     private String trend(Long userId) {
+        // Trend is intentionally simple for the mobile UI: only the net score
+        // movement from the last seven days is exposed.
         var events = reputationEventRepository.findAllByUser_IdAndOccurredAtAfterOrderByOccurredAtDesc(userId, LocalDateTime.now().minusDays(7));
         if (events.isEmpty()) return "STABLE";
         var delta = events.stream().mapToInt(ReputationEvent::getPointsDelta).sum();

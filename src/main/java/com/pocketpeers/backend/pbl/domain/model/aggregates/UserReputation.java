@@ -9,6 +9,8 @@ import lombok.Getter;
 @Getter
 @Entity
 public class UserReputation extends AuditableAbstractAggregateRoot<UserReputation> {
+    // One aggregate per user keeps the current PBL state fast to read, while
+    // ReputationEvent stores the detailed history of every score change.
     @OneToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "user_id", nullable = false, unique = true)
     private User user;
@@ -33,19 +35,27 @@ public class UserReputation extends AuditableAbstractAggregateRoot<UserReputatio
     }
 
     public int applyDelta(int delta) {
+        // The score is bounded for the product-level reputation meter: events
+        // can move it up or down, but the public score stays between 0 and 100.
         this.score = Math.max(0, Math.min(100, this.score + delta));
         return this.score;
     }
 
     public void registerOnTimePayment() {
+        // On-time payments increase both the completed-payment counter and the
+        // streak used by several badge unlock rules.
         this.onTimePaymentStreak++;
         this.completedPayments++;
     }
 
     public void registerPartialPayment() {
+        // Partial payments currently affect points through the event delta, but
+        // do not count as completed payments or increase the on-time streak.
     }
 
     public void registerOverduePayment() {
+        // An overdue event breaks punctuality streaks even if the user later
+        // completes the payment and receives a late-payment event.
         this.onTimePaymentStreak = 0;
     }
 

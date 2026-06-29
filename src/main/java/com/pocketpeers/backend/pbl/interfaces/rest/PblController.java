@@ -25,6 +25,8 @@ import java.util.List;
 @RequestMapping(value = "api/v1/pbl", produces = MediaType.APPLICATION_JSON_VALUE)
 @Tag(name = "PBL Gamification", description = "Points, badges and leaderboard endpoints")
 public class PblController {
+    // REST facade for PBL. Controllers keep transport concerns here and defer
+    // scoring, badge rules and leaderboard ordering to the domain services.
     private final PblCommandService pblCommandService;
     private final PblQueryService pblQueryService;
     private final UserInformationRepository userInformationRepository;
@@ -78,6 +80,8 @@ public class PblController {
     @GetMapping("/groups/{groupId}/members/{memberId}/public-profile")
     public ResponseEntity<PublicMemberProfileResource> getPublicMemberProfile(@PathVariable Long groupId,
                                                                               @PathVariable Long memberId) {
+        // Public profile combines user information with reputation and unlocked
+        // badges so the mobile app does not need multiple round trips.
         var reputation = pblQueryService.handle(new GetUserReputationQuery(memberId));
         var userInfo = userInformationRepository.findByUserId(memberId);
         var profile = new PublicMemberProfileResource(
@@ -92,6 +96,8 @@ public class PblController {
     }
 
     private List<BadgeResource> badgesForUser(Long userId) {
+        // Return the full badge catalog and mark which ones are unlocked. This
+        // lets the UI show locked and unlocked achievements in one response.
         var unlocked = pblQueryService.getUserBadges(userId);
         return pblQueryService.getAllBadges().stream()
                 .map(badge -> unlocked.stream()

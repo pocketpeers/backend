@@ -31,6 +31,8 @@ import java.time.ZoneId;
 
 @Service
 public class PaymentCommandServiceImpl implements PaymentCommandService {
+    // Payment deadlines and timing badges are evaluated with Lima business time
+    // so the backend and users share the same day boundary.
     private static final ZoneId LIMA_ZONE = ZoneId.of("America/Lima");
 
     private final PaymentRepository paymentRepository;
@@ -97,6 +99,8 @@ public class PaymentCommandServiceImpl implements PaymentCommandService {
     @Transactional
     public Long handle(ConfirmPaymentCommand command) {
         return paymentRepository.findById(command.paymentId()).map(payment -> {
+            // Only the expense creator can confirm money received. Confirmation
+            // is the point where reputation, badges and blockchain status move.
             Expense expense = payment.getExpense();
             if (!expense.isActive()) {
                 throw new RuntimeException("Cancelled expenses cannot confirm payments");
@@ -119,6 +123,8 @@ public class PaymentCommandServiceImpl implements PaymentCommandService {
     }
 
     private void registerReputationEventForConfirmedPayment(Payment payment) {
+        // A confirmed payment can produce one core reputation event plus
+        // optional timing badge events. Duplicate checks keep retries safe.
         var type = reputationEventTypeFor(payment);
         if (isOverdue(payment)) {
             registerOverduePaymentPenaltyIfMissing(payment);
@@ -153,6 +159,9 @@ public class PaymentCommandServiceImpl implements PaymentCommandService {
     }
 
     private ReputationEventType reputationEventTypeFor(Payment payment) {
+        // Partial, late and on-time payments have different reputation effects.
+        // Late payments are separated from overdue penalties so users can still
+        // recover some points after completing the debt.
         if (payment.getStatus().equals("PARTIAL")) {
             return ReputationEventType.PARTIAL_PAYMENT;
         }
@@ -163,6 +172,8 @@ public class PaymentCommandServiceImpl implements PaymentCommandService {
     }
 
     private boolean shouldSkipReputationEvent(Payment payment, ReputationEventType type) {
+        // Core reputation events should be recorded once per payment status
+        // path, while badge-only timing events are handled separately.
         if (type == ReputationEventType.PARTIAL_PAYMENT) {
             return reputationEventRepository.existsByPaymentIdAndType(payment.getId(), ReputationEventType.PARTIAL_PAYMENT);
         }
@@ -180,6 +191,8 @@ public class PaymentCommandServiceImpl implements PaymentCommandService {
     }
 
     private void registerTimingBadgeEvents(Payment payment) {
+        // Timing events do not change score directly; they exist to unlock
+        // achievements such as early payment or just-in-time payment.
         var timeUntilExpenseCloses = timeUntilExpenseCloses(payment);
         if (timeUntilExpenseCloses.compareTo(Duration.ofHours(48)) > 0) {
             registerPaymentBadgeEventIfMissing(payment, ReputationEventType.EARLY_PAYMENT,

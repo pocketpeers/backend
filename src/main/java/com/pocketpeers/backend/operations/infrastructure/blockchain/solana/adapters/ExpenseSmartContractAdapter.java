@@ -38,9 +38,11 @@ import java.util.Map;
 @Service
 @RequiredArgsConstructor
 public class ExpenseSmartContractAdapter implements ExpenseSmartContractPort {
+    // Seeds used to derive stable Program Derived Addresses (PDA) for each
+    // expense and payment. Keeping these values unchanged is important because
+    // the same seeds must be used by the on-chain Solana program.
     private static final byte[] EXPENSE_SEED = "expense".getBytes(StandardCharsets.UTF_8);
     private static final byte[] PAYMENT_SEED = "payment".getBytes(StandardCharsets.UTF_8);
-    private static final int MAX_EXPENSE_NAME_BYTES = 64;
     private static final Duration SIGNATURE_STATUS_TIMEOUT = Duration.ofSeconds(90);
     private static final long SIGNATURE_STATUS_POLL_MILLIS = 1_500;
     private static final ZoneId LIMA_ZONE = ZoneId.of("America/Lima");
@@ -62,6 +64,9 @@ public class ExpenseSmartContractAdapter implements ExpenseSmartContractPort {
     @Override
     @Transactional
     public ContractAddress deployExpenseContract(Expense expense) throws Exception {
+        // The expense contract is created once per expense. If this method is
+        // retried after a successful deploy, the local database prevents
+        // creating a duplicated on-chain account for the same business expense.
         expenseContractRepository.findByExpense(expense)
                 .ifPresent(existingContract -> {
                     throw new IllegalArgumentException("Expense contract already exists for the given expense");
@@ -73,6 +78,9 @@ public class ExpenseSmartContractAdapter implements ExpenseSmartContractPort {
 
         String signature;
         try {
+            // Solana transactions require a recent blockhash and explicit
+            // instructions. The adapter builds the Anchor-compatible payload
+            // here so the domain layer only depends on ExpenseSmartContractPort.
             String latestBlockhash = latestBlockhash();
             Transaction transaction = new Transaction();
             transaction.addInstruction(createExpenseInstruction(programPublicKey, authority, expensePda, expense));
@@ -105,6 +113,9 @@ public class ExpenseSmartContractAdapter implements ExpenseSmartContractPort {
     @Override
     @Transactional
     public TransactionHash addPaymentToExpenseContract(Expense expense, Payment payment) throws Exception {
+        // Payment registration is idempotent from the backend perspective:
+        // once a payment has a transaction hash, callers can safely retry and
+        // receive the already persisted hash instead of sending a new tx.
         var existingPaymentTransaction = contractTransactionRepository.findFirstByPayment_IdOrderByCreatedAtDesc(payment.getId());
         if (existingPaymentTransaction.isPresent()) {
             return existingPaymentTransaction.get().getTransactionHash();
@@ -132,6 +143,8 @@ public class ExpenseSmartContractAdapter implements ExpenseSmartContractPort {
             transaction.setRecentBlockHash(latestBlockhash);
 
             signature = sendTransaction(transaction, latestBlockhash);
+            System.out.println("Payment account created on Solana. pda=" + paymentPda.toBase58()
+                    + ", signature=" + signature);
             waitForSuccessfulSignature(signature);
         } catch (Exception exception) {
             System.out.println("Failed to register payment on Solana: " + exception.getMessage());
@@ -144,6 +157,7 @@ public class ExpenseSmartContractAdapter implements ExpenseSmartContractPort {
         transaction.setContract(expenseContractEntity);
         transaction.setPayment(payment);
         transaction.setTransactionHash(transactionHash);
+        transaction.setPaymentAddress(paymentPda.toBase58());
         contractTransactionRepository.save(transaction);
 
         obtenerSaldoBackend();
@@ -171,12 +185,13 @@ public class ExpenseSmartContractAdapter implements ExpenseSmartContractPort {
                     authority,
                     expensePda,
                     paymentPda,
-                    payment,
-                    status
+                    payment
             ));
             transaction.setRecentBlockHash(latestBlockhash);
 
             signature = sendTransaction(transaction, latestBlockhash);
+            System.out.println("Payment updated on Solana. pda=" + paymentPda.toBase58()
+                    + ", signature=" + signature);
             waitForSuccessfulSignature(signature);
         } catch (Exception exception) {
             throw new RuntimeException("Failed to update payment status on Solana: " + exception.getMessage(), exception);
@@ -188,6 +203,7 @@ public class ExpenseSmartContractAdapter implements ExpenseSmartContractPort {
         contractTransaction.setContract(expenseContractEntity);
         contractTransaction.setPayment(payment);
         contractTransaction.setTransactionHash(transactionHash);
+        contractTransaction.setPaymentAddress(paymentPda.toBase58());
         contractTransactionRepository.save(contractTransaction);
 
         obtenerSaldoBackend();
@@ -201,14 +217,14 @@ public class ExpenseSmartContractAdapter implements ExpenseSmartContractPort {
             PublicKey expensePda,
             Expense expense
     ) throws Exception {
-        String hashedExpenseName = hashStringToSHA256(expense.getName());
+        // Anchor expects the first 8 bytes to be the instruction discriminator,
+        // followed by the serialized arguments in little-endian order.
         var data = new AnchorData("create_expense")
                 .u64(expense.getId())
                 .u64(expense.getGroup().getId())
                 .u64(expense.getUser().getId())
                 .u64(toMinorUnits(expense.getAmount()))
                 .i64(expense.getDueDate().atTime(LocalTime.MIDNIGHT).atZone(LIMA_ZONE).toEpochSecond())
-                .string(trimUtf8(hashedExpenseName, MAX_EXPENSE_NAME_BYTES))
                 .toByteArray();
 
         return new TransactionInstruction(
@@ -253,12 +269,10 @@ public class ExpenseSmartContractAdapter implements ExpenseSmartContractPort {
             PublicKey authority,
             PublicKey expensePda,
             PublicKey paymentPda,
-            Payment payment,
-            PaymentStatus status
+            Payment payment
     ) throws Exception {
         var data = new AnchorData("update_payment")
                 .u64(toMinorUnits(payment.getAmountPaid()))
-                .u8(anchorPaymentStatus(status))
                 .bool(payment.getConfirmed())
                 .toByteArray();
 
@@ -282,6 +296,8 @@ public class ExpenseSmartContractAdapter implements ExpenseSmartContractPort {
     }
 
     private String latestBlockhash() throws Exception {
+        // solanaj does not expose every RPC helper used here, so this call uses
+        // the generic RPC entry point and extracts the blockhash from the result.
         Map<String, Object> blockhashResult = solanaClient.getRpcClient().call(
                 "getLatestBlockhash",
                 null,
@@ -292,6 +308,9 @@ public class ExpenseSmartContractAdapter implements ExpenseSmartContractPort {
     }
 
     private void waitForSuccessfulSignature(String signature) throws Exception {
+        // sendTransaction returning a signature only means the cluster accepted
+        // the transaction. Poll until it is confirmed/finalized so the database
+        // record reflects an on-chain operation that really landed.
         long deadline = System.currentTimeMillis() + SIGNATURE_STATUS_TIMEOUT.toMillis();
         while (System.currentTimeMillis() < deadline) {
             Map<String, Object> result = solanaClient.getRpcClient().call(
@@ -322,6 +341,8 @@ public class ExpenseSmartContractAdapter implements ExpenseSmartContractPort {
     }
 
     private PublicKey expensePda(Long expenseId, PublicKey programPublicKey) {
+        // Expense PDA is deterministic: the same expense id always maps to the
+        // same on-chain account for this program.
         return PublicKey.findProgramAddress(
                 List.of(EXPENSE_SEED, leU64(expenseId)),
                 programPublicKey
@@ -343,66 +364,19 @@ public class ExpenseSmartContractAdapter implements ExpenseSmartContractPort {
     }
 
     private long toMinorUnits(BigDecimal amount) {
+        // Store currency-like amounts as integer cents before sending them to
+        // Solana to avoid decimal precision differences across runtimes.
         return amount
                 .setScale(2, RoundingMode.HALF_UP)
                 .movePointRight(2)
                 .longValueExact();
     }
 
-    private int anchorPaymentStatus(PaymentStatus status) {
-        return switch (status) {
-            case PENDING -> 0;
-            case PARTIAL -> 1;
-            case COMPLETED -> 2;
-        };
-    }
-
-    private String trimUtf8(String value, int maxBytes) {
-        if (value == null) {
-            return "";
-        }
-        var normalized = value.trim();
-        if (normalized.getBytes(StandardCharsets.UTF_8).length <= maxBytes) {
-            return normalized;
-        }
-        var builder = new StringBuilder();
-        for (int offset = 0; offset < normalized.length(); ) {
-            int codePoint = normalized.codePointAt(offset);
-            var next = builder.toString() + new String(Character.toChars(codePoint));
-            if (next.getBytes(StandardCharsets.UTF_8).length > maxBytes) {
-                break;
-            }
-            builder.appendCodePoint(codePoint);
-            offset += Character.charCount(codePoint);
-        }
-        return builder.toString();
-    }
-
-    private String hashStringToSHA256(String originalString) {
-        try {
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            byte[] encodedhash = digest.digest(originalString.getBytes(StandardCharsets.UTF_8));
-
-            // Convertir los bytes a formato Hexadecimal (String de 64 caracteres)
-            StringBuilder hexString = new StringBuilder(2 * encodedhash.length);
-            for (byte b : encodedhash) {
-                String hex = Integer.toHexString(0xff & b);
-                if (hex.length() == 1) {
-                    hexString.append('0');
-                }
-                hexString.append(hex);
-            }
-            return hexString.toString();
-
-        } catch (Exception e) {
-            throw new RuntimeException("Error al calcular el hash SHA-256", e);
-        }
-    }
-
     private static class AnchorData {
         private final ByteArrayOutputStream output = new ByteArrayOutputStream();
 
         AnchorData(String instructionName) throws Exception {
+            // Anchor discriminators are sha256("global:<instruction>")[0..8].
             output.write(anchorDiscriminator(instructionName));
         }
 
@@ -415,20 +389,8 @@ public class ExpenseSmartContractAdapter implements ExpenseSmartContractPort {
             return u64(value);
         }
 
-        AnchorData u8(int value) {
-            output.write(value);
-            return this;
-        }
-
         AnchorData bool(boolean value) {
             output.write(value ? 1 : 0);
-            return this;
-        }
-
-        AnchorData string(String value) {
-            var bytes = value.getBytes(StandardCharsets.UTF_8);
-            write(ByteBuffer.allocate(Integer.BYTES).order(ByteOrder.LITTLE_ENDIAN).putInt(bytes.length).array());
-            write(bytes);
             return this;
         }
 

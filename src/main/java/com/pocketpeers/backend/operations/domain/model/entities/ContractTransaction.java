@@ -26,6 +26,6 @@ public class ContractTransaction extends AuditableModel{
     @Embedded
     private TransactionHash transactionHash;
 
-
+    private String paymentAddress;
 
 }

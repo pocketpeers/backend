@@ -17,6 +17,8 @@ import org.springframework.stereotype.Service;
 
 @Service
 public class PblCommandServiceImpl implements PblCommandService {
+    // Central scoring table for PBL events. Keeping the values in one place
+    // makes reputation changes easier to audit when business rules change.
     private static final int ON_TIME_PAYMENT_POINTS = 3;
     private static final int PARTIAL_PAYMENT_POINTS = 1;
     private static final int OVERDUE_PAYMENT_POINTS = -6;
@@ -42,6 +44,9 @@ public class PblCommandServiceImpl implements PblCommandService {
     @Override
     @Transactional
     public Long handle(RegisterReputationEventCommand command) {
+        // A reputation event is the source of truth for why a user's score
+        // changed. The aggregate stores the current counters, while the event
+        // table preserves the historical reason and resulting score.
         var user = userRepository.findById(command.userId()).orElseThrow(() -> new RuntimeException("User not found"));
         var reputation = userReputationRepository.findByUser_Id(command.userId()).orElseGet(() -> new UserReputation(user));
         var delta = calculateDelta(command.type());
@@ -59,6 +64,8 @@ public class PblCommandServiceImpl implements PblCommandService {
 
     @Override
     public void seedDefaultBadges() {
+        // Seed is idempotent so it can be called from local setup or admin
+        // tooling without duplicating catalog badges.
         createBadgeIfMissing("FIRST_PAYMENT", "Primer pago", "Completo su primer pago registrado.");
         createBadgeIfMissing("STREAK_3", "Racha x3", "Completo tres pagos puntuales consecutivos.");
         createBadgeIfMissing("STREAK_10", "Racha x10", "Completo diez pagos puntuales consecutivos.");
@@ -85,6 +92,8 @@ public class PblCommandServiceImpl implements PblCommandService {
     }
 
     private void unlockBadges(UserReputation reputation, ReputationEventType eventType) {
+        // Badge unlock rules use both cumulative aggregate counters and the
+        // current event type, because some badges are one-off achievements.
         unlockIf(reputation, "FIRST_PAYMENT", reputation.getCompletedPayments() >= 1);
         unlockIf(reputation, "STREAK_3", reputation.getOnTimePaymentStreak() >= 3);
         unlockIf(reputation, "STREAK_10", reputation.getOnTimePaymentStreak() >= 10);
