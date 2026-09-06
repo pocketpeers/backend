@@ -13,6 +13,7 @@ public record PaymentReminderResource(
         PaymentReminderType type,
         String title,
         String body,
-        Date createdAt
+        Date createdAt,
+        boolean read
 ) {
 }

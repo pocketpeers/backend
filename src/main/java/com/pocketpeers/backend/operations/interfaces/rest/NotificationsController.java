@@ -10,20 +10,27 @@ import com.pocketpeers.backend.operations.interfaces.rest.resources.RegisterDevi
 import com.pocketpeers.backend.operations.interfaces.rest.resources.DeviceTokenStatusResource;
 import com.pocketpeers.backend.operations.interfaces.rest.resources.TestNotificationResource;
 import com.pocketpeers.backend.operations.interfaces.rest.resources.TestNotificationResponseResource;
+import com.pocketpeers.backend.operations.interfaces.rest.resources.UnreadCountResource;
 import com.pocketpeers.backend.operations.interfaces.rest.transform.PaymentReminderResourceFromEntityAssembler;
 import com.pocketpeers.backend.shared.interfaces.rest.resources.MessageResource;
 import com.pocketpeers.backend.users.infrastructure.persistence.jpa.repositories.UserRepository;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.transaction.Transactional;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
+import java.time.LocalDateTime;
 import java.util.List;
 
 @RestController
 @RequestMapping("/api/v1/notifications")
 @Tag(name = "Notifications", description = "Payment reminder notifications")
 public class NotificationsController {
+    /** Tope de pagina, para que un cliente no pida el historial entero de golpe. */
+    private static final int MAX_PAGE_SIZE = 100;
+
     private final PaymentReminderRepository reminderRepository;
     private final UserDeviceTokenRepository deviceTokenRepository;
     private final UserRepository userRepository;
@@ -52,6 +59,75 @@ public class NotificationsController {
                 .map(PaymentReminderResourceFromEntityAssembler::toResourceFromEntity)
                 .toList();
         return ResponseEntity.ok(reminders);
+    }
+
+    /**
+     * Historial completo del usuario, leidas y no leidas.
+     *
+     * <p>Paginado porque la lista solo crece. El limite se acota en el servidor
+     * para que un cliente no pueda pedir el historial entero de una sola vez.</p>
+     */
+    @GetMapping
+    public ResponseEntity<List<PaymentReminderResource>> getHistory(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "30") int size,
+            Authentication authentication
+    ) {
+        var user = authenticatedUser(authentication);
+        var safePage = Math.max(0, page);
+        var safeSize = Math.min(Math.max(1, size), MAX_PAGE_SIZE);
+        var reminders = reminderRepository
+                .findByUser_IdOrderByCreatedAtDesc(user.getId(), PageRequest.of(safePage, safeSize))
+                .stream()
+                .map(PaymentReminderResourceFromEntityAssembler::toResourceFromEntity)
+                .toList();
+        return ResponseEntity.ok(reminders);
+    }
+
+    /** Cuantas quedan sin leer, para el indicador de la interfaz. */
+    @GetMapping("/unread/count")
+    public ResponseEntity<UnreadCountResource> getUnreadCount(Authentication authentication) {
+        var user = authenticatedUser(authentication);
+        return ResponseEntity.ok(
+                new UnreadCountResource(reminderRepository.countByUser_IdAndReadAtIsNull(user.getId())));
+    }
+
+    /** Marca como leidas todas las pendientes del usuario. */
+    @PostMapping("/read-all")
+    @Transactional
+    public ResponseEntity<MessageResource> markAllRead(Authentication authentication) {
+        var user = authenticatedUser(authentication);
+        var updated = reminderRepository.markAllReadForUser(user.getId(), LocalDateTime.now());
+        return ResponseEntity.ok(new MessageResource("Marked " + updated + " notifications as read"));
+    }
+
+    /** Borra una notificacion del historial del usuario. */
+    @DeleteMapping("/{notificationId}")
+    public ResponseEntity<MessageResource> delete(@PathVariable Long notificationId, Authentication authentication) {
+        var user = authenticatedUser(authentication);
+        var reminder = reminderRepository.findById(notificationId)
+                .orElseThrow(() -> new IllegalArgumentException("Notification not found"));
+        // La comprobacion de propiedad no es opcional: sin ella, cualquiera con
+        // sesion podria borrar las notificaciones de otra persona probando ids.
+        if (!reminder.getUser().getId().equals(user.getId())) {
+            throw new IllegalArgumentException("Notification does not belong to authenticated user");
+        }
+        reminderRepository.delete(reminder);
+        return ResponseEntity.ok(new MessageResource("Notification deleted"));
+    }
+
+    /**
+     * Vacia el historial leido del usuario.
+     *
+     * <p>Solo borra las que ya vio. Arrasar tambien con las pendientes haria que
+     * alguien pierda un aviso de vencimiento sin haberlo leido nunca.</p>
+     */
+    @DeleteMapping("/read")
+    @Transactional
+    public ResponseEntity<MessageResource> deleteRead(Authentication authentication) {
+        var user = authenticatedUser(authentication);
+        var deleted = reminderRepository.deleteReadForUser(user.getId());
+        return ResponseEntity.ok(new MessageResource("Deleted " + deleted + " notifications"));
     }
 
     @PostMapping("/{notificationId}/read")

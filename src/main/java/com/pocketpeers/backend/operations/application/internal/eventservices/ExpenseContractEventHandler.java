@@ -6,6 +6,7 @@ import com.pocketpeers.backend.operations.domain.model.events.PaymentUpdatedEven
 import com.pocketpeers.backend.operations.domain.model.valueobjects.ContractAddress;
 import com.pocketpeers.backend.operations.domain.model.valueobjects.PaymentStatus;
 import com.pocketpeers.backend.operations.domain.model.valueobjects.TransactionHash;
+import com.pocketpeers.backend.operations.domain.exceptions.PermanentContractSyncException;
 import com.pocketpeers.backend.operations.domain.ports.out.ExpenseSmartContractPort;
 import com.pocketpeers.backend.operations.infrastructure.persistence.jpa.repositories.ExpenseContractRepository;
 import com.pocketpeers.backend.operations.infrastructure.persistence.jpa.repositories.PaymentRepository;
@@ -87,6 +88,17 @@ public class ExpenseContractEventHandler {
                             payment
                     );
                 LOGGER.info("Payment added to expense contract with transaction hash: {}", transactionHash.hash());
+                return;
+            } catch (PermanentContractSyncException exception) {
+                // Los reintentos existen para esperar a que el contrato del gasto
+                // termine de desplegarse, que es una condicion pasajera. Una falla
+                // permanente no mejora esperando y cada intento firma y envia una
+                // transaccion real, asi que reintentarla solo multiplica el costo.
+                LOGGER.warn(
+                        "Payment contract sync abandoned, retrying would not help. paymentId={}, message={}",
+                        payment.getId(),
+                        exception.getMessage()
+                );
                 return;
             } catch (Exception exception) {
                 if (attempt == PAYMENT_CONTRACT_SYNC_ATTEMPTS) {

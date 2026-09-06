@@ -17,7 +17,8 @@ public class PaymentReminderResourceFromEntityAssembler {
                 reminder.getType(),
                 reminder.getTitle(),
                 reminder.getBody(),
-                reminder.getCreatedAt()
+                reminder.getCreatedAt(),
+                reminder.isRead()
         );
     }
 }

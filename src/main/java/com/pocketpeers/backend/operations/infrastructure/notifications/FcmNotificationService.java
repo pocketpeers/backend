@@ -4,6 +4,8 @@ import com.google.firebase.FirebaseApp;
 import com.google.firebase.messaging.*;
 import com.pocketpeers.backend.operations.domain.model.aggregates.Payment;
 import com.pocketpeers.backend.operations.domain.model.entities.PaymentReminder;
+import com.pocketpeers.backend.operations.domain.model.valueobjects.NotificationDeliveryStatus;
+import com.pocketpeers.backend.operations.infrastructure.persistence.jpa.repositories.PaymentReminderRepository;
 import com.pocketpeers.backend.operations.infrastructure.persistence.jpa.repositories.UserDeviceTokenRepository;
 import com.pocketpeers.backend.users.domain.model.aggregates.User;
 import org.slf4j.Logger;
@@ -17,13 +19,24 @@ public class FcmNotificationService {
     private static final Logger LOGGER = LoggerFactory.getLogger(FcmNotificationService.class);
 
     private final UserDeviceTokenRepository tokenRepository;
+    private final PaymentReminderRepository reminderRepository;
 
-    public FcmNotificationService(UserDeviceTokenRepository tokenRepository) {
+    public FcmNotificationService(UserDeviceTokenRepository tokenRepository,
+                                  PaymentReminderRepository reminderRepository) {
         this.tokenRepository = tokenRepository;
+        this.reminderRepository = reminderRepository;
     }
 
+    /**
+     * Envia el recordatorio y deja registrado como termino el intento.
+     *
+     * <p>El resultado se persiste en el propio recordatorio: antes esta
+     * informacion solo existia en los logs, asi que era imposible saber despues
+     * si un aviso llego o no.</p>
+     */
     public void sendPaymentReminder(PaymentReminder reminder) {
         if (FirebaseApp.getApps().isEmpty()) {
+            recordOutcome(reminder, NotificationDeliveryStatus.SKIPPED, "Firebase not initialized");
             return;
         }
         if (reminder.getId() == null) {
@@ -37,6 +50,16 @@ public class FcmNotificationService {
 
         Payment payment = reminder.getPayment();
         var tokens = tokenRepository.findByUser_Id(payment.getUser().getId());
+        if (tokens.isEmpty()) {
+            // Caso distinto de un fallo de envio: a esta persona no habia por
+            // donde avisarle. Confundirlo con un error de Firebase distorsiona
+            // cualquier medicion del efecto de los recordatorios.
+            recordOutcome(reminder, NotificationDeliveryStatus.NO_DEVICE, null);
+            return;
+        }
+
+        var delivered = 0;
+        String lastError = null;
         for (var deviceToken : tokens) {
             var message = Message.builder()
                     .setToken(deviceToken.getToken())
@@ -54,7 +77,9 @@ public class FcmNotificationService {
                     .build();
             try {
                 FirebaseMessaging.getInstance().send(message);
+                delivered++;
             } catch (FirebaseMessagingException exc) {
+                lastError = String.valueOf(exc.getMessagingErrorCode());
                 LOGGER.warn(
                         "Failed to send payment reminder through FCM. tokenId={}, errorCode={}, messagingErrorCode={}, message={}",
                         deviceToken.getId(),
@@ -67,6 +92,25 @@ public class FcmNotificationService {
                 }
             }
         }
+
+        if (delivered > 0) {
+            reminder.markDelivered(delivered);
+            reminderRepository.save(reminder);
+            return;
+        }
+        recordOutcome(reminder, NotificationDeliveryStatus.FAILED, lastError);
+    }
+
+    /**
+     * Guarda el desenlace de la entrega.
+     *
+     * <p>Se aisla en un metodo para que ninguna de las rutas de salida temprana
+     * se olvide de registrar por que no se envio: un recordatorio que quedara en
+     * PENDING para siempre seria indistinguible de uno que nadie intento mandar.</p>
+     */
+    private void recordOutcome(PaymentReminder reminder, NotificationDeliveryStatus status, String detail) {
+        reminder.markNotDelivered(status, detail);
+        reminderRepository.save(reminder);
     }
 
     public FcmNotificationResult sendTestNotification(User user, String title, String body) {

@@ -10,6 +10,7 @@ import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.dao.DaoAuthenticationProvider;
 import org.springframework.security.config.annotation.authentication.configuration.AuthenticationConfiguration;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
+import org.springframework.http.HttpMethod;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.core.userdetails.UserDetailsService;
@@ -102,6 +103,11 @@ public class WebSecurityConfiguration {
                 .exceptionHandling(exceptionHandling -> exceptionHandling.authenticationEntryPoint(unauthorizedRequestHandler))
                 .sessionManagement( customizer -> customizer.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(authorizeRequests -> authorizeRequests
+                        // El cambio de contrasena vive bajo /authentication pero exige
+                        // sesion iniciada. Esta regla va ANTES del permitAll de abajo
+                        // porque el primer patron que coincide es el que manda; si
+                        // fuera despues, el comodin lo dejaria abierto al publico.
+                        .requestMatchers(HttpMethod.PUT, "/api/v1/authentication/password").authenticated()
                         .requestMatchers(
                                 "/api/v1/authentication/**",
                                 "/api/v1/images/**",

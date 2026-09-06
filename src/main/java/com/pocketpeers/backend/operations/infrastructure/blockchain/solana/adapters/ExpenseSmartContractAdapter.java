@@ -7,6 +7,7 @@ import com.pocketpeers.backend.operations.domain.model.entities.ExpenseContract;
 import com.pocketpeers.backend.operations.domain.model.valueobjects.ContractAddress;
 import com.pocketpeers.backend.operations.domain.model.valueobjects.PaymentStatus;
 import com.pocketpeers.backend.operations.domain.model.valueobjects.TransactionHash;
+import com.pocketpeers.backend.operations.domain.exceptions.PermanentContractSyncException;
 import com.pocketpeers.backend.operations.domain.ports.out.ExpenseSmartContractPort;
 import com.pocketpeers.backend.operations.infrastructure.blockchain.solana.services.SolanaClient;
 import com.pocketpeers.backend.operations.infrastructure.persistence.jpa.repositories.ContractTransactionRepository;
@@ -76,6 +77,14 @@ public class ExpenseSmartContractAdapter implements ExpenseSmartContractPort {
         PublicKey authority = solanaClient.getSignerAccount().getPublicKey();
         PublicKey expensePda = expensePda(expense.getId(), programPublicKey);
 
+        // La comprobacion local de arriba solo sabe lo que hay en esta base de
+        // datos. Si la base se recreo, la PDA puede existir en la red aunque aqui
+        // no haya registro, y enviar la creacion costaria una comision para
+        // terminar rechazada.
+        if (accountExistsOnChain(expensePda)) {
+            return reconcileExistingExpenseContract(expense, expensePda);
+        }
+
         String signature;
         try {
             // Solana transactions require a recent blockhash and explicit
@@ -92,6 +101,11 @@ public class ExpenseSmartContractAdapter implements ExpenseSmartContractPort {
             waitForSuccessfulSignature(signature);
         } catch (Exception exception) {
             System.out.println("Failed to create expense on Solana: " + exception.getMessage());
+            if (isAlreadyInUse(exception)) {
+                // Carrera entre la comprobacion y el envio: alguien creo la cuenta
+                // en el intervalo. Se adopta la que ya existe en vez de reintentar.
+                return reconcileExistingExpenseContract(expense, expensePda);
+            }
             throw new RuntimeException("Failed to create expense on Solana: " + exception.getMessage(), exception);
         }
 
@@ -129,6 +143,12 @@ public class ExpenseSmartContractAdapter implements ExpenseSmartContractPort {
         PublicKey expensePda = new PublicKey(expenseContractEntity.getContractAddress().address());
         PublicKey paymentPda = paymentPda(expensePda, payment.getId(), programPublicKey);
 
+        // Mismo caso que en el gasto: la PDA del pago puede existir en la red sin
+        // que esta base tenga el registro.
+        if (accountExistsOnChain(paymentPda)) {
+            return reconcileExistingPaymentTransaction(expenseContractEntity, payment, paymentPda);
+        }
+
         String signature;
         try {
             String latestBlockhash = latestBlockhash();
@@ -148,6 +168,9 @@ public class ExpenseSmartContractAdapter implements ExpenseSmartContractPort {
             waitForSuccessfulSignature(signature);
         } catch (Exception exception) {
             System.out.println("Failed to register payment on Solana: " + exception.getMessage());
+            if (isAlreadyInUse(exception)) {
+                return reconcileExistingPaymentTransaction(expenseContractEntity, payment, paymentPda);
+            }
             throw new RuntimeException("Failed to register payment on Solana: " + exception.getMessage(), exception);
         }
 
@@ -175,6 +198,15 @@ public class ExpenseSmartContractAdapter implements ExpenseSmartContractPort {
         PublicKey authority = solanaClient.getSignerAccount().getPublicKey();
         PublicKey expensePda = new PublicKey(expenseContractEntity.getContractAddress().address());
         PublicKey paymentPda = paymentPda(expensePda, payment.getId(), programPublicKey);
+
+        // Actualizar una cuenta que no existe falla siempre. Antes se enviaba
+        // igual y se pagaba la comision en cada intento; ahora se comprueba con
+        // una lectura gratuita y se corta sin reintentar.
+        if (!accountExistsOnChain(paymentPda)) {
+            throw new PermanentContractSyncException(
+                    "Payment account does not exist on-chain, nothing to update. paymentId="
+                            + payment.getId() + ", pda=" + paymentPda.toBase58());
+        }
 
         String signature;
         try {
@@ -293,6 +325,134 @@ public class ExpenseSmartContractAdapter implements ExpenseSmartContractPort {
                 List.of(solanaClient.getSignerAccount()),
                 latestBlockhash
         );
+    }
+
+    /**
+     * Adopta un contrato de gasto que ya existe en la cadena.
+     *
+     * <p>Registra en la base local la PDA y, si se puede, la firma con la que se
+     * creo. Eso cierra el hueco de no tener rastro local de transacciones
+     * enviadas en ejecuciones anteriores.</p>
+     */
+    private ContractAddress reconcileExistingExpenseContract(Expense expense, PublicKey expensePda) {
+        System.out.println("Expense account already exists on Solana, adopting it instead of creating. pda="
+                + expensePda.toBase58());
+
+        ExpenseContract expenseContract = expenseContractRepository.save(new ExpenseContract(
+                new ContractAddress(expensePda.toBase58()),
+                expense
+        ));
+
+        TransactionHash creationSignature = creationSignatureFor(expensePda);
+        if (creationSignature != null) {
+            ContractTransaction contractTransaction = new ContractTransaction();
+            contractTransaction.setContract(expenseContract);
+            contractTransaction.setTransactionHash(creationSignature);
+            contractTransactionRepository.save(contractTransaction);
+        }
+        return expenseContract.getContractAddress();
+    }
+
+    /**
+     * Adopta un pago que ya existe en la cadena, recuperando su firma de creacion.
+     */
+    private TransactionHash reconcileExistingPaymentTransaction(ExpenseContract expenseContract,
+                                                                Payment payment,
+                                                                PublicKey paymentPda) {
+        System.out.println("Payment account already exists on Solana, adopting it instead of creating. pda="
+                + paymentPda.toBase58());
+
+        TransactionHash creationSignature = creationSignatureFor(paymentPda);
+        if (creationSignature == null) {
+            throw new PermanentContractSyncException(
+                    "Payment account already exists on-chain but its signature could not be recovered. pda="
+                            + paymentPda.toBase58());
+        }
+
+        ContractTransaction contractTransaction = new ContractTransaction();
+        contractTransaction.setContract(expenseContract);
+        contractTransaction.setPayment(payment);
+        contractTransaction.setTransactionHash(creationSignature);
+        contractTransaction.setPaymentAddress(paymentPda.toBase58());
+        contractTransactionRepository.save(contractTransaction);
+
+        return creationSignature;
+    }
+
+    /**
+     * Consulta si una cuenta ya existe en la cadena.
+     *
+     * <p>Es una lectura: no se firma nada y no cuesta comisiones. Preguntar antes
+     * de enviar una instruccion de creacion evita pagar por una transaccion que la
+     * cadena va a rechazar de todas formas.</p>
+     *
+     * <p>Hace falta porque las PDA se derivan de identificadores de la base de
+     * datos local. Una base recreada vuelve a numerar desde 1 y deriva las mismas
+     * direcciones que ya existen en la red, asi que la base local no puede saber
+     * por si sola lo que hay en la cadena.</p>
+     */
+    private boolean accountExistsOnChain(PublicKey account) {
+        try {
+            Map<String, Object> result = solanaClient.getRpcClient().call(
+                    "getAccountInfo",
+                    List.of(account.toBase58(), Map.of("encoding", "base64")),
+                    Map.class
+            );
+            return result != null && result.get("value") != null;
+        } catch (Exception exception) {
+            // Si la consulta falla no se puede afirmar que la cuenta exista. Se
+            // asume que no y se deja que el envio decida: perder una comision es
+            // preferible a bloquear un registro legitimo por un error de red.
+            System.out.println("Could not verify account on-chain, assuming it does not exist. account="
+                    + account.toBase58() + ", message=" + exception.getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * Recupera la firma mas antigua asociada a una cuenta, que es la de su creacion.
+     *
+     * <p>Sirve para reconstruir en la base local el hash de una transaccion que se
+     * envio en una ejecucion anterior. Tambien es una lectura sin costo.</p>
+     */
+    private TransactionHash creationSignatureFor(PublicKey account) {
+        try {
+            List<?> signatures = solanaClient.getRpcClient().call(
+                    "getSignaturesForAddress",
+                    List.of(account.toBase58(), Map.of("limit", 1000)),
+                    List.class
+            );
+            if (signatures == null || signatures.isEmpty()) {
+                return null;
+            }
+            // El RPC devuelve de la mas reciente a la mas antigua; la creacion es la ultima.
+            Object oldest = signatures.get(signatures.size() - 1);
+            if (oldest instanceof Map<?, ?> entry && entry.get("signature") instanceof String signature) {
+                return new TransactionHash(signature);
+            }
+            return null;
+        } catch (Exception exception) {
+            System.out.println("Could not recover creation signature. account=" + account.toBase58()
+                    + ", message=" + exception.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * Reconoce los errores de la cadena que no tiene sentido reintentar.
+     *
+     * <p>Cuando una PDA ya existe, el programa Anchor rechaza la instruccion de
+     * creacion y ese rechazo se repite identico en cada intento.</p>
+     */
+    private static boolean isAlreadyInUse(Exception exception) {
+        String message = exception.getMessage();
+        if (message == null) {
+            return false;
+        }
+        String normalized = message.toLowerCase();
+        return normalized.contains("already in use")
+                || normalized.contains("already initialized")
+                || normalized.contains("custom program error: 0x0");
     }
 
     private String latestBlockhash() throws Exception {

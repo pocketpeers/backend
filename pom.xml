@@ -110,6 +110,12 @@
             <artifactId>commons-lang3</artifactId>
             <version>3.12.0</version>
         </dependency>
+        <!-- Cuantiles de la distribucion Beta para la banda de confianza de PeerScore -->
+        <dependency>
+            <groupId>org.apache.commons</groupId>
+            <artifactId>commons-math3</artifactId>
+            <version>3.6.1</version>
+        </dependency>
         <!-- https://mvnrepository.com/artifact/net.sourceforge.tess4j/tess4j -->
         <dependency>
             <groupId>net.sourceforge.tess4j</groupId>
