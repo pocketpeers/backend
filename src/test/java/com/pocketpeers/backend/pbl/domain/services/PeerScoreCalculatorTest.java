@@ -1,6 +1,7 @@
 package com.pocketpeers.backend.pbl.domain.services;
 
 import com.pocketpeers.backend.pbl.domain.model.valueobjects.GroupStats;
+import com.pocketpeers.backend.pbl.domain.model.valueobjects.NextLevelGoal;
 import com.pocketpeers.backend.pbl.domain.model.valueobjects.OutcomeRecord;
 import com.pocketpeers.backend.pbl.domain.model.valueobjects.PaymentOutcome;
 import com.pocketpeers.backend.pbl.domain.model.valueobjects.ReputationLevel;
@@ -18,6 +19,7 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -294,6 +296,57 @@ class PeerScoreCalculatorTest {
                 4, 1.5, 90, 3, 0.8, 0.5, 25, 60, 85, 18, 12, 2, 3, 4));
         assertThrowsIllegalArgument(() -> new ScoreParameters(
                 4, 0.35, 0, 3, 0.8, 0.5, 25, 60, 85, 18, 12, 2, 3, 4));
+    }
+
+    // ------------------------------------------------------------------
+    // Objetivo del siguiente nivel y evidencia por evento
+    // ------------------------------------------------------------------
+
+    @Test
+    @DisplayName("El objetivo dice cual de las tres condiciones falta, no solo el puntaje")
+    void objetivoDistingueQueCondicionFalta() {
+        // Cuarenta pagos puntuales con una sola contraparte: el puntaje sobra y
+        // la banda esta cerrada, pero la diversidad no llega ni a Bronce.
+        List<OutcomeRecord> outcomes = punctualHistory(40, 1);
+
+        ScoreResult result = calculate(outcomes);
+        NextLevelGoal goal = calculator.nextLevelGoal(result);
+
+        assertEquals(ReputationLevel.BRONZE, goal.level());
+        assertEquals(0.0, goal.missingScore(),
+                "el puntaje ya alcanza: " + result.score());
+        assertTrue(goal.missingCounterparties() > 0.9,
+                "le falta cerca de una contraparte entera, no " + goal.missingCounterparties());
+    }
+
+    @Test
+    @DisplayName("Quien ya esta en Oro no tiene siguiente objetivo")
+    void enOroNoHayObjetivo() {
+        ScoreResult result = calculate(punctualHistory(60, 6));
+
+        assertEquals(ReputationLevel.GOLD, result.level(),
+                "sesenta pagos puntuales con seis contrapartes deberian dar Oro");
+        assertNull(calculator.nextLevelGoal(result),
+                "no hay nivel por encima de Oro que describir");
+    }
+
+    @Test
+    @DisplayName("La evidencia de un evento es la que el propio calculo agrupa")
+    void evidenciaDeUnEventoCoincideConLaDelCalculo() {
+        // Regresion de la evidencia inversa. Quien invoca al calculador tiene que
+        // poder medir la direccion contraria con la misma vara; si esta cuenta
+        // difiriera de la interna, el indice de reciprocidad compararia escalas
+        // distintas y la defensa contra pares reciprocos dejaria de funcionar.
+        List<OutcomeRecord> outcomes = List.of(
+                event(10L, 50, PaymentOutcome.PUNTUAL, 1),
+                event(10L, 150, PaymentOutcome.TARDIO, 40));
+
+        double reported = 0.0;
+        for (OutcomeRecord outcome : outcomes) {
+            reported += calculator.evidenceMass(outcome, GROUPS, GLOBAL, NOW);
+        }
+
+        assertEquals(evidenceFor(outcomes, 10L), reported, 1e-9);
     }
 
     // ------------------------------------------------------------------

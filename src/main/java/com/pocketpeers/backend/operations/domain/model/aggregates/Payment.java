@@ -8,11 +8,16 @@ import jakarta.persistence.*;
 import lombok.Getter;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
 
 @Entity
 public class Payment extends AuditableAbstractAggregateRoot<Payment> {
+    // Payment deadlines are business days in Lima, the same zone the reputation
+    // engine and the scheduled tasks use to decide what counts as on time.
+    private static final ZoneId LIMA_ZONE = ZoneId.of("America/Lima");
 
     @Getter
     private String description;
@@ -25,6 +30,14 @@ public class Payment extends AuditableAbstractAggregateRoot<Payment> {
 
     @Getter
     private Boolean confirmed;
+
+    // When the payer registered the latest instalment. Reputation is about the
+    // payer's behaviour, so being on time has to be measured against this and
+    // not against the moment the expense creator got around to confirming.
+    // `updatedAt` cannot stand in for it: confirmation moves that timestamp too.
+    // Null on payments registered before this field existed.
+    @Getter
+    private LocalDateTime paidAt;
 
     @Enumerated(EnumType.STRING)
     private PaymentStatus status;
@@ -73,6 +86,9 @@ public class Payment extends AuditableAbstractAggregateRoot<Payment> {
         } else {
             this.status = PaymentStatus.COMPLETED;
         }
+        // Each instalment overwrites the mark: the reputation event registered
+        // on the next confirmation is about this instalment, not an earlier one.
+        this.paidAt = LocalDateTime.now(LIMA_ZONE);
         this.confirmed = false;
     }
 

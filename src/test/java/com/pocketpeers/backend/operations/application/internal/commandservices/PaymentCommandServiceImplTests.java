@@ -6,10 +6,13 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Optional;
 
 import com.pocketpeers.backend.groups.domain.model.aggregates.Group;
@@ -161,6 +164,159 @@ class PaymentCommandServiceImplTests {
         assertThat(reputationCaptor.getAllValues())
                 .extracting(RegisterReputationEventCommand::type)
                 .contains(ReputationEventType.ON_TIME_PAYMENT);
+    }
+
+    @Test
+    void confirmPaymentKeepsOnTimeCreditWhenTheCreatorConfirmsLate() {
+        // The payer settled two days before the due date; the creator only got
+        // around to confirming three days after it. The delay is not the payer's
+        // behaviour, so it must not cost them the on time credit.
+        Payment payment = paymentWithExpense(new BigDecimal("80.00"), LocalDate.now().minusDays(3));
+        ReflectionTestUtils.setField(payment, "id", 42L);
+        payment.pay(new BigDecimal("80.00"));
+        ReflectionTestUtils.setField(payment, "paidAt", LocalDateTime.now().minusDays(5));
+        when(paymentRepository.findById(42L)).thenReturn(Optional.of(payment));
+        when(reputationEventRepository.existsByPaymentIdAndType(any(), any())).thenReturn(false);
+        when(pblCommandService.handle(any(RegisterReputationEventCommand.class))).thenReturn(1L);
+
+        service.handle(new ConfirmPaymentCommand(42L, "owner"));
+
+        ArgumentCaptor<RegisterReputationEventCommand> reputationCaptor =
+                ArgumentCaptor.forClass(RegisterReputationEventCommand.class);
+        verify(pblCommandService, atLeastOnce()).handle(reputationCaptor.capture());
+        assertThat(reputationCaptor.getAllValues())
+                .extracting(RegisterReputationEventCommand::type)
+                .contains(ReputationEventType.ON_TIME_PAYMENT)
+                .doesNotContain(ReputationEventType.OVERDUE_PAYMENT, ReputationEventType.LATE_PAYMENT);
+    }
+
+    @Test
+    void confirmPaymentPenalisesPaymentActuallyMadeAfterTheDueDate() {
+        Payment payment = paymentWithExpense(new BigDecimal("80.00"), LocalDate.now().minusDays(3));
+        ReflectionTestUtils.setField(payment, "id", 42L);
+        payment.pay(new BigDecimal("80.00"));
+        ReflectionTestUtils.setField(payment, "paidAt", LocalDateTime.now().minusDays(1));
+        when(paymentRepository.findById(42L)).thenReturn(Optional.of(payment));
+        when(reputationEventRepository.existsByPaymentIdAndType(any(), any())).thenReturn(false);
+        when(pblCommandService.handle(any(RegisterReputationEventCommand.class))).thenReturn(1L);
+
+        service.handle(new ConfirmPaymentCommand(42L, "owner"));
+
+        ArgumentCaptor<RegisterReputationEventCommand> reputationCaptor =
+                ArgumentCaptor.forClass(RegisterReputationEventCommand.class);
+        verify(pblCommandService, atLeastOnce()).handle(reputationCaptor.capture());
+        assertThat(reputationCaptor.getAllValues())
+                .extracting(RegisterReputationEventCommand::type)
+                .contains(ReputationEventType.OVERDUE_PAYMENT, ReputationEventType.LATE_PAYMENT)
+                .doesNotContain(ReputationEventType.ON_TIME_PAYMENT);
+    }
+
+    @Test
+    void confirmPaymentFallsBackToConfirmationTimeWhenThePaymentMarkIsMissing() {
+        // Payments registered before `paidAt` existed carry no mark, and for
+        // those the old behaviour of judging them at confirmation time is all
+        // there is to go on.
+        Payment payment = paymentWithExpense(new BigDecimal("80.00"), LocalDate.now().minusDays(2));
+        ReflectionTestUtils.setField(payment, "id", 42L);
+        payment.pay(new BigDecimal("80.00"));
+        ReflectionTestUtils.setField(payment, "paidAt", null);
+        when(paymentRepository.findById(42L)).thenReturn(Optional.of(payment));
+        when(reputationEventRepository.existsByPaymentIdAndType(any(), any())).thenReturn(false);
+        when(pblCommandService.handle(any(RegisterReputationEventCommand.class))).thenReturn(1L);
+
+        service.handle(new ConfirmPaymentCommand(42L, "owner"));
+
+        ArgumentCaptor<RegisterReputationEventCommand> reputationCaptor =
+                ArgumentCaptor.forClass(RegisterReputationEventCommand.class);
+        verify(pblCommandService, atLeastOnce()).handle(reputationCaptor.capture());
+        assertThat(reputationCaptor.getAllValues())
+                .extracting(RegisterReputationEventCommand::type)
+                .contains(ReputationEventType.OVERDUE_PAYMENT, ReputationEventType.LATE_PAYMENT);
+    }
+
+    @Test
+    void confirmedPaymentCarriesTheFactsPeerScoreNeeds() {
+        // Sin acreedor y monto el evento solo sirve al contador de puntos: el
+        // score nuevo no tendria con quien contrastar la conducta ni como pesarla.
+        LocalDate dueDate = LocalDate.now().plusDays(5);
+        Payment payment = paymentWithExpense(new BigDecimal("80.00"), dueDate);
+        ReflectionTestUtils.setField(payment, "id", 42L);
+        payment.pay(new BigDecimal("80.00"));
+        when(paymentRepository.findById(42L)).thenReturn(Optional.of(payment));
+        when(reputationEventRepository.existsByPaymentIdAndType(any(), any())).thenReturn(false);
+        when(pblCommandService.handle(any(RegisterReputationEventCommand.class))).thenReturn(1L);
+
+        service.handle(new ConfirmPaymentCommand(42L, "owner"));
+
+        var core = capturedCommandOfType(ReputationEventType.ON_TIME_PAYMENT);
+        assertThat(core.counterpartyId()).isEqualTo(1L);
+        assertThat(core.amount()).isEqualByComparingTo("80.00");
+        // El plazo es el cierre del gasto, no la fecha a secas: el dia del
+        // vencimiento cuenta completo, igual que para decidir si fue puntual.
+        assertThat(core.dueAt()).isEqualTo(dueDate.plusDays(1).atStartOfDay());
+        assertThat(core.resolvedAt()).isEqualTo(payment.getPaidAt());
+    }
+
+    @Test
+    void timingBadgeEventsCarryNoObligationFacts() {
+        // EARLY_PAYMENT solo desbloquea una insignia. Si llevara monto y
+        // contraparte, el mismo pago entraria dos veces como evidencia.
+        Payment payment = paymentWithExpense(new BigDecimal("80.00"), LocalDate.now().plusDays(10));
+        ReflectionTestUtils.setField(payment, "id", 42L);
+        payment.pay(new BigDecimal("80.00"));
+        when(paymentRepository.findById(42L)).thenReturn(Optional.of(payment));
+        when(reputationEventRepository.existsByPaymentIdAndType(any(), any())).thenReturn(false);
+        when(pblCommandService.handle(any(RegisterReputationEventCommand.class))).thenReturn(1L);
+
+        service.handle(new ConfirmPaymentCommand(42L, "owner"));
+
+        var badge = capturedCommandOfType(ReputationEventType.EARLY_PAYMENT);
+        assertThat(badge.counterpartyId()).isNull();
+        assertThat(badge.amount()).isNull();
+        assertThat(badge.resolvedAt()).isNull();
+    }
+
+    @Test
+    void registerOverduePenaltiesSealsTheEventWhenTheDeadlineClosed() {
+        LocalDate dueDate = LocalDate.now().minusDays(3);
+        Payment payment = paymentWithExpense(new BigDecimal("80.00"), dueDate);
+        ReflectionTestUtils.setField(payment, "id", 42L);
+        when(paymentRepository.findOverdueUnpaidPayments(any(LocalDate.class))).thenReturn(List.of(payment));
+        when(reputationEventRepository.existsByPaymentIdAndType(42L, ReputationEventType.OVERDUE_PAYMENT))
+                .thenReturn(false);
+        when(pblCommandService.handle(any(RegisterReputationEventCommand.class))).thenReturn(1L);
+
+        assertThat(service.registerOverduePenalties()).isEqualTo(1);
+
+        var penalty = capturedCommandOfType(ReputationEventType.OVERDUE_PAYMENT);
+        assertThat(penalty.counterpartyId()).isEqualTo(1L);
+        assertThat(penalty.amount()).isEqualByComparingTo("80.00");
+        // La obligacion quedo resuelta cuando cerro el plazo, no ahora: un
+        // vencimiento viejo detectado hoy no es evidencia fresca.
+        assertThat(penalty.resolvedAt()).isEqualTo(dueDate.plusDays(1).atStartOfDay());
+    }
+
+    @Test
+    void registerOverduePenaltiesSkipsPaymentThatAlreadyCarriesIt() {
+        Payment payment = paymentWithExpense(new BigDecimal("80.00"), LocalDate.now().minusDays(3));
+        ReflectionTestUtils.setField(payment, "id", 42L);
+        when(paymentRepository.findOverdueUnpaidPayments(any(LocalDate.class))).thenReturn(List.of(payment));
+        when(reputationEventRepository.existsByPaymentIdAndType(42L, ReputationEventType.OVERDUE_PAYMENT))
+                .thenReturn(true);
+
+        service.registerOverduePenalties();
+
+        verifyNoInteractions(pblCommandService);
+    }
+
+    private RegisterReputationEventCommand capturedCommandOfType(ReputationEventType type) {
+        ArgumentCaptor<RegisterReputationEventCommand> captor =
+                ArgumentCaptor.forClass(RegisterReputationEventCommand.class);
+        verify(pblCommandService, atLeastOnce()).handle(captor.capture());
+        return captor.getAllValues().stream()
+                .filter(command -> command.type() == type)
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("no se registro ningun evento " + type));
     }
 
     private Payment paymentWithExpense(BigDecimal amount, LocalDate dueDate) {

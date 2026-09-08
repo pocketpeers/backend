@@ -2,13 +2,11 @@ package com.pocketpeers.backend.pbl.interfaces.rest;
 
 import com.pocketpeers.backend.pbl.domain.model.queries.GetGroupLeaderboardQuery;
 import com.pocketpeers.backend.pbl.domain.model.queries.GetReputationHistoryQuery;
-import com.pocketpeers.backend.pbl.domain.model.queries.GetUserReputationQuery;
 import com.pocketpeers.backend.pbl.domain.services.PblCommandService;
 import com.pocketpeers.backend.pbl.domain.services.PblQueryService;
 import com.pocketpeers.backend.pbl.interfaces.rest.resources.*;
 import com.pocketpeers.backend.pbl.interfaces.rest.transform.RegisterReputationEventCommandFromResourceAssembler;
 import com.pocketpeers.backend.pbl.interfaces.rest.transform.ReputationEventResourceFromEntityAssembler;
-import com.pocketpeers.backend.pbl.interfaces.rest.transform.ReputationResourceFromEntityAssembler;
 import com.pocketpeers.backend.shared.interfaces.rest.resources.MessageResource;
 import com.pocketpeers.backend.users.domain.model.aggregates.UserInformation;
 import com.pocketpeers.backend.users.infrastructure.persistence.jpa.repositories.UserInformationRepository;
@@ -53,8 +51,7 @@ public class PblController {
 
     @GetMapping("/users/{userId}/reputation")
     public ResponseEntity<ReputationResource> getUserReputation(@PathVariable Long userId) {
-        var reputation = pblQueryService.handle(new GetUserReputationQuery(userId));
-        return ResponseEntity.ok(ReputationResourceFromEntityAssembler.toResourceFromEntity(reputation));
+        return ResponseEntity.ok(pblQueryService.getUserReputationResource(userId));
     }
 
     @GetMapping("/users/{userId}/history")
@@ -82,15 +79,15 @@ public class PblController {
                                                                               @PathVariable Long memberId) {
         // Public profile combines user information with reputation and unlocked
         // badges so the mobile app does not need multiple round trips.
-        var reputation = pblQueryService.handle(new GetUserReputationQuery(memberId));
+        var reputation = pblQueryService.getUserReputationResource(memberId);
         var userInfo = userInformationRepository.findByUserId(memberId);
         var profile = new PublicMemberProfileResource(
                 memberId,
                 userInfo.map(UserInformation::getFullName).orElse(""),
                 userInfo.map(UserInformation::getPhoto).orElse(""),
-                ReputationResourceFromEntityAssembler.toResourceFromEntity(reputation),
+                reputation,
                 badgesForUser(memberId).stream().filter(BadgeResource::unlocked).toList(),
-                reputation.getCompletedPayments()
+                reputation.completedPayments()
         );
         return ResponseEntity.ok(profile);
     }

@@ -6,7 +6,10 @@ import com.pocketpeers.backend.pbl.domain.model.entities.BadgeCatalog;
 import com.pocketpeers.backend.pbl.domain.model.entities.ReputationEvent;
 import com.pocketpeers.backend.pbl.domain.model.entities.UserBadge;
 import com.pocketpeers.backend.pbl.domain.model.valueobjects.ReputationEventType;
+import com.pocketpeers.backend.pbl.domain.model.valueobjects.ReputationLevel;
 import com.pocketpeers.backend.pbl.domain.services.PblCommandService;
+import com.pocketpeers.backend.pbl.domain.services.PeerScoreService;
+import com.pocketpeers.backend.pbl.infrastructure.configuration.PeerScoreProperties;
 import com.pocketpeers.backend.pbl.infrastructure.persistence.jpa.repositories.BadgeCatalogRepository;
 import com.pocketpeers.backend.pbl.infrastructure.persistence.jpa.repositories.ReputationEventRepository;
 import com.pocketpeers.backend.pbl.infrastructure.persistence.jpa.repositories.UserBadgeRepository;
@@ -30,15 +33,20 @@ public class PblCommandServiceImpl implements PblCommandService {
     private final ReputationEventRepository reputationEventRepository;
     private final BadgeCatalogRepository badgeCatalogRepository;
     private final UserBadgeRepository userBadgeRepository;
+    private final PeerScoreService peerScoreService;
+    private final PeerScoreProperties peerScoreProperties;
 
     public PblCommandServiceImpl(UserRepository userRepository, UserReputationRepository userReputationRepository,
                                  ReputationEventRepository reputationEventRepository,
-                                 BadgeCatalogRepository badgeCatalogRepository, UserBadgeRepository userBadgeRepository) {
+                                 BadgeCatalogRepository badgeCatalogRepository, UserBadgeRepository userBadgeRepository,
+                                 PeerScoreService peerScoreService, PeerScoreProperties peerScoreProperties) {
         this.userRepository = userRepository;
         this.userReputationRepository = userReputationRepository;
         this.reputationEventRepository = reputationEventRepository;
         this.badgeCatalogRepository = badgeCatalogRepository;
         this.userBadgeRepository = userBadgeRepository;
+        this.peerScoreService = peerScoreService;
+        this.peerScoreProperties = peerScoreProperties;
     }
 
     @Override
@@ -56,10 +64,29 @@ public class PblCommandServiceImpl implements PblCommandService {
         if (command.type() == ReputationEventType.OVERDUE_PAYMENT) reputation.registerOverduePayment();
         if (command.type() == ReputationEventType.LATE_PAYMENT) reputation.registerLatePayment();
         userReputationRepository.save(reputation);
-        unlockBadges(reputation, command.type());
+
         var event = new ReputationEvent(user, command.groupId(), command.paymentId(), command.type(), delta,
-                resultingScore, command.description());
-        return reputationEventRepository.save(event).getId();
+                resultingScore, command.description(), command.counterpartyId(), command.amount(),
+                command.dueAt(), command.resolvedAt());
+        var eventId = reputationEventRepository.save(event).getId();
+
+        // PeerScore no acumula: recalcula desde el historial completo, asi que
+        // solo puede correr una vez que este evento ya esta guardado.
+        peerScoreService.recalculateAfterEvent(command.userId(), command.counterpartyId());
+
+        // Las insignias se evaluan al final, sobre el agregado que los dos
+        // motores ya actualizaron: las de nivel dependen del score y leerlas
+        // antes del recalculo las dejaria un evento por detras.
+        var recalculated = userReputationRepository.findByUser_Id(command.userId()).orElse(reputation);
+        unlockBadges(recalculated, command.type());
+
+        return eventId;
+    }
+
+    @Override
+    @Transactional
+    public void refreshLevelBadges(Long userId) {
+        userReputationRepository.findByUser_Id(userId).ifPresent(this::unlockLevelBadges);
     }
 
     @Override
@@ -104,8 +131,28 @@ public class PblCommandServiceImpl implements PblCommandService {
         unlockIf(reputation, "JUST_IN_TIME", eventType == ReputationEventType.JUST_IN_TIME_PAYMENT);
         unlockIf(reputation, "PARTIAL_EFFORT", eventType == ReputationEventType.PARTIAL_PAYMENT);
         unlockIf(reputation, "ZERO_DEBT", eventType == ReputationEventType.ZERO_DEBT);
-        unlockIf(reputation, "SILVER_LEVEL", reputation.getScore() >= 60);
-        unlockIf(reputation, "GOLD_LEVEL", reputation.getScore() >= 85);
+        unlockLevelBadges(reputation);
+    }
+
+    private void unlockLevelBadges(UserReputation reputation) {
+        unlockIf(reputation, "SILVER_LEVEL", hasReached(reputation, ReputationLevel.SILVER));
+        unlockIf(reputation, "GOLD_LEVEL", hasReached(reputation, ReputationLevel.GOLD));
+    }
+
+    /**
+     * Si el usuario alcanzo un nivel, segun el motor que este activo.
+     *
+     * <p>Con PeerScore activo el nivel no sale del puntaje solo: exige tambien
+     * una banda estrecha y contrapartes distintas. Por eso se compara el nivel ya
+     * resuelto y no el numero: alguien con score 90 y una sola contraparte no
+     * llego a Plata, y darle la insignia contradiria justamente la defensa que
+     * hace inutil la colusion.</p>
+     */
+    private boolean hasReached(UserReputation reputation, ReputationLevel level) {
+        if (peerScoreProperties.isEnabled() && reputation.hasPeerScore()) {
+            return reputation.getPeerLevel().ordinal() >= level.ordinal();
+        }
+        return reputation.getScore() >= level.getMinimumScore();
     }
 
     private void unlockIf(UserReputation reputation, String code, boolean condition) {

@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
 
 import com.pocketpeers.backend.operations.domain.model.entities.PaymentEvidence;
 import org.junit.jupiter.api.Test;
@@ -17,6 +19,40 @@ class PaymentTests {
         assertThat(payment.getStatus()).isEqualTo("PENDING");
         assertThat(payment.getAmountPaid()).isEqualByComparingTo("0");
         assertThat(payment.getConfirmed()).isFalse();
+        assertThat(payment.getPaidAt()).isNull();
+    }
+
+    @Test
+    void payRecordsWhenThePayerPaid() {
+        Payment payment = new Payment("Cena", new BigDecimal("100.00"), null, null);
+        LocalDateTime before = LocalDateTime.now(ZoneId.of("America/Lima"));
+
+        payment.pay(new BigDecimal("100.00"));
+
+        assertThat(payment.getPaidAt()).isBetween(before, LocalDateTime.now(ZoneId.of("America/Lima")));
+    }
+
+    @Test
+    void eachInstalmentMovesThePaymentMark() {
+        // The reputation event registered at confirmation describes the latest
+        // instalment, so the mark has to follow it and not stay on the first one.
+        Payment payment = new Payment("Cena", new BigDecimal("100.00"), null, null);
+        payment.pay(new BigDecimal("40.00"));
+        LocalDateTime firstInstalment = payment.getPaidAt();
+
+        payment.pay(new BigDecimal("60.00"));
+
+        assertThat(payment.getPaidAt()).isAfterOrEqualTo(firstInstalment);
+    }
+
+    @Test
+    void rejectedPaymentDoesNotMoveThePaymentMark() {
+        Payment payment = new Payment("Cena", new BigDecimal("100.00"), null, null);
+
+        assertThatThrownBy(() -> payment.pay(new BigDecimal("100.01")))
+                .isInstanceOf(IllegalArgumentException.class);
+
+        assertThat(payment.getPaidAt()).isNull();
     }
 
     @Test

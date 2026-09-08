@@ -56,7 +56,7 @@ public class GroupCommandServiceImpl implements GroupCommandService {
             throw new IllegalArgumentException("Error while saving group: " + e.getMessage());
         }
 
-        pblCommandService.handle(new RegisterReputationEventCommand(
+        pblCommandService.handle(RegisterReputationEventCommand.badgeOnly(
                 command.adminId(),
                 group.getId(),
                 null,

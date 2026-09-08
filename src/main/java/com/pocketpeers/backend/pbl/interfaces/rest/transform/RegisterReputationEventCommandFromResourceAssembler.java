@@ -10,7 +10,11 @@ public class RegisterReputationEventCommandFromResourceAssembler {
                 resource.groupId(),
                 resource.paymentId(),
                 resource.type(),
-                resource.description()
+                resource.description(),
+                resource.counterpartyId(),
+                resource.amount(),
+                resource.dueAt(),
+                resource.resolvedAt()
         );
     }
 }

@@ -4,7 +4,6 @@ import com.pocketpeers.backend.operations.infrastructure.persistence.jpa.reposit
 import com.pocketpeers.backend.pbl.domain.model.commands.RegisterReputationEventCommand;
 import com.pocketpeers.backend.pbl.domain.model.valueobjects.ReputationEventType;
 import com.pocketpeers.backend.pbl.domain.services.PblCommandService;
-import com.pocketpeers.backend.pbl.infrastructure.persistence.jpa.repositories.ReputationEventRepository;
 import com.pocketpeers.backend.users.infrastructure.persistence.jpa.repositories.UserRepository;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
@@ -20,45 +19,38 @@ public class ScheduledTasks {
     private final PaymentRepository paymentRepository;
     private final UserRepository userRepository;
     private final PblCommandService pblCommandService;
-    private final ReputationEventRepository reputationEventRepository;
+    private final PaymentCommandService paymentCommandService;
 
     public ScheduledTasks(ExpensesNotificationService expensesNotificationService,
                           PaymentRepository paymentRepository,
                           UserRepository userRepository,
                           PblCommandService pblCommandService,
-                          ReputationEventRepository reputationEventRepository) {
+                          PaymentCommandService paymentCommandService) {
         this.expensesNotificationService = expensesNotificationService;
         this.paymentRepository = paymentRepository;
         this.userRepository = userRepository;
         this.pblCommandService = pblCommandService;
-        this.reputationEventRepository = reputationEventRepository;
+        this.paymentCommandService = paymentCommandService;
     }
 
     @Scheduled(cron = "0 0 8 * * ?", zone = "America/Lima")
     public void sendDailyPaymentReminders() {
         expensesNotificationService.createPaymentReminders();
-        registerOverduePaymentPenalties();
     }
 
-    private void registerOverduePaymentPenalties() {
-        var today = LocalDate.now(LIMA_ZONE);
-        for (var payment : paymentRepository.findOverdueUnpaidPayments(today)) {
-            registerOverduePaymentPenaltyIfMissing(payment.getId(), payment.getUser().getId(),
-                    payment.getExpense().getGroup().getId());
-        }
-    }
-
-    private void registerOverduePaymentPenaltyIfMissing(Long paymentId, Long userId, Long groupId) {
-        if (reputationEventRepository.existsByPaymentIdAndType(paymentId, ReputationEventType.OVERDUE_PAYMENT)) {
-            return;
-        }
-        pblCommandService.handle(new RegisterReputationEventCommand(
-                userId,
-                groupId,
-                paymentId,
-                ReputationEventType.OVERDUE_PAYMENT,
-                "Payment became overdue before being completed"
-        ));
+    // Overdue penalties run just after midnight, when the due date has actually
+    // closed, and no longer ride along with the 08:00 reminders. Bundled with
+    // them they left an eight hour window in which a payment was already overdue
+    // on screen but still unpenalised, so the score disagreed with the dates the
+    // group could see. Reminders stay at 08:00 because they push notifications
+    // and nobody wants one at midnight; registering a penalty is silent.
+    //
+    // What to register is decided by the payment service: the reputation event
+    // now carries the creditor, the amount and the deadline, and those are read
+    // from the payment and its expense, not from the clock in this class.
+    @Scheduled(cron = "0 5 0 * * ?", zone = "America/Lima")
+    public void registerOverduePaymentPenalties() {
+        paymentCommandService.registerOverduePenalties();
     }
 
     @Scheduled(cron = "0 55 23 * * ?", zone = "America/Lima")
@@ -75,7 +67,7 @@ public class ScheduledTasks {
             var hasPendingDebt = paymentRepository.countPendingPaymentsByUserIdDueOnOrBefore(
                     user.getId(), today) > 0;
             if (hasPaymentsDueThisMonth && !hasPendingDebt) {
-                pblCommandService.handle(new RegisterReputationEventCommand(
+                pblCommandService.handle(RegisterReputationEventCommand.badgeOnly(
                         user.getId(),
                         null,
                         null,

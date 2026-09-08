@@ -130,32 +130,68 @@ public class PaymentCommandServiceImpl implements PaymentCommandService {
             registerOverduePaymentPenaltyIfMissing(payment);
         }
         if (!shouldSkipReputationEvent(payment, type)) {
-            pblCommandService.handle(new RegisterReputationEventCommand(
-                    payment.getUser().getId(),
-                    payment.getExpense().getGroup().getId(),
-                    payment.getId(),
-                    type,
-                    descriptionFor(type)
-            ));
+            pblCommandService.handle(outcomeCommand(payment, type, paymentMoment(payment)));
         }
         registerTimingBadgeEvents(payment);
     }
 
+    @Override
+    @Transactional
+    public int registerOverduePenalties() {
+        // Vive aqui y no en el planificador porque los hechos que el evento
+        // necesita (acreedor, monto, plazo) se leen del pago, y este es el
+        // servicio que sabe como leerlos. Tenerlo en dos lugares garantizaba
+        // que un dia registraran evidencia distinta para el mismo hecho.
+        var overdue = paymentRepository.findOverdueUnpaidPayments(LocalDate.now(LIMA_ZONE));
+        overdue.forEach(this::registerOverduePaymentPenaltyIfMissing);
+        return overdue.size();
+    }
+
+    /**
+     * Comando de un desenlace, con los hechos que PeerScore necesita.
+     *
+     * <p>La contraparte es quien creo el gasto: es a quien se le debe. El plazo
+     * es el cierre del gasto y no la fecha a secas, para que coincida con el
+     * limite que decide si un pago fue puntual.</p>
+     */
+    private RegisterReputationEventCommand outcomeCommand(Payment payment, ReputationEventType type,
+                                                          LocalDateTime resolvedAt) {
+        return new RegisterReputationEventCommand(
+                payment.getUser().getId(),
+                payment.getExpense().getGroup().getId(),
+                payment.getId(),
+                type,
+                descriptionFor(type),
+                payment.getExpense().getUser().getId(),
+                payment.getAmount(),
+                expenseCloseOf(payment),
+                resolvedAt
+        );
+    }
+
     private boolean isOverdue(Payment payment) {
-        return payment.getExpense().getDueDate().isBefore(LocalDate.now(LIMA_ZONE));
+        return payment.getExpense().getDueDate().isBefore(paymentMoment(payment).toLocalDate());
+    }
+
+    private LocalDateTime paymentMoment(Payment payment) {
+        // Timing is judged by when the payer paid, not by when this method runs.
+        // Confirmation depends on the expense creator, and making reputation
+        // depend on it let a late confirmation turn an on-time payment into an
+        // overdue one. Payments registered before `paidAt` existed have no mark,
+        // and for those the confirmation time is still the best guess available.
+        var paidAt = payment.getPaidAt();
+        return paidAt != null ? paidAt : LocalDateTime.now(LIMA_ZONE);
     }
 
     private void registerOverduePaymentPenaltyIfMissing(Payment payment) {
         if (reputationEventRepository.existsByPaymentIdAndType(payment.getId(), ReputationEventType.OVERDUE_PAYMENT)) {
             return;
         }
-        pblCommandService.handle(new RegisterReputationEventCommand(
-                payment.getUser().getId(),
-                payment.getExpense().getGroup().getId(),
-                payment.getId(),
-                ReputationEventType.OVERDUE_PAYMENT,
-                "Payment became overdue before being completed"
-        ));
+        // La obligacion quedo resuelta, como incumplida, cuando se cerro el
+        // plazo. Sellarla con el instante en que corre este metodo haria que un
+        // vencimiento antiguo detectado hoy pareciera evidencia fresca.
+        pblCommandService.handle(outcomeCommand(payment, ReputationEventType.OVERDUE_PAYMENT,
+                expenseCloseOf(payment)));
     }
 
     private ReputationEventType reputationEventTypeFor(Payment payment) {
@@ -196,27 +232,36 @@ public class PaymentCommandServiceImpl implements PaymentCommandService {
         var timeUntilExpenseCloses = timeUntilExpenseCloses(payment);
         if (timeUntilExpenseCloses.compareTo(Duration.ofHours(48)) > 0) {
             registerPaymentBadgeEventIfMissing(payment, ReputationEventType.EARLY_PAYMENT,
-                    "Payment confirmed more than 48 hours before expense close");
+                    "Payment made more than 48 hours before expense close");
         }
         if (!timeUntilExpenseCloses.isNegative()
                 && !timeUntilExpenseCloses.isZero()
                 && timeUntilExpenseCloses.compareTo(Duration.ofHours(1)) < 0) {
             registerPaymentBadgeEventIfMissing(payment, ReputationEventType.JUST_IN_TIME_PAYMENT,
-                    "Payment confirmed less than one hour before expense close");
+                    "Payment made less than one hour before expense close");
         }
     }
 
     private Duration timeUntilExpenseCloses(Payment payment) {
-        var now = LocalDateTime.now(LIMA_ZONE);
-        var expenseClose = payment.getExpense().getDueDate().plusDays(1).atStartOfDay();
-        return Duration.between(now, expenseClose);
+        return Duration.between(paymentMoment(payment), expenseCloseOf(payment));
+    }
+
+    /**
+     * Instante en que se cierra el plazo de un gasto.
+     *
+     * <p>Es el dia siguiente al vencimiento a las 00:00, o sea que el dia del
+     * vencimiento cuenta completo. Es el mismo limite que usa la deteccion de
+     * atrasos, y por eso es el que se guarda como plazo del evento.</p>
+     */
+    private LocalDateTime expenseCloseOf(Payment payment) {
+        return payment.getExpense().getDueDate().plusDays(1).atStartOfDay();
     }
 
     private void registerPaymentBadgeEventIfMissing(Payment payment, ReputationEventType type, String description) {
         if (reputationEventRepository.existsByPaymentIdAndType(payment.getId(), type)) {
             return;
         }
-        pblCommandService.handle(new RegisterReputationEventCommand(
+        pblCommandService.handle(RegisterReputationEventCommand.badgeOnly(
                 payment.getUser().getId(),
                 payment.getExpense().getGroup().getId(),
                 payment.getId(),
@@ -232,9 +277,9 @@ public class PaymentCommandServiceImpl implements PaymentCommandService {
             case ON_TIME_PAYMENT -> "Full payment confirmed in one installment";
             case LATE_PAYMENT -> "Late payment completed after overdue penalty";
             case MANUAL_ADJUSTMENT -> "Manual reputation adjustment";
-            case EARLY_PAYMENT -> "Payment confirmed more than 48 hours before expense close";
+            case EARLY_PAYMENT -> "Payment made more than 48 hours before expense close";
             case GROUP_CREATED -> "Collaborative microfinance group created successfully";
-            case JUST_IN_TIME_PAYMENT -> "Payment confirmed less than one hour before expense close";
+            case JUST_IN_TIME_PAYMENT -> "Payment made less than one hour before expense close";
             case ZERO_DEBT -> "Month closed with no pending debts or commitments";
         };
     }

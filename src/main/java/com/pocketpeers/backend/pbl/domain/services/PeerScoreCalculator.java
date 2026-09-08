@@ -1,6 +1,7 @@
 package com.pocketpeers.backend.pbl.domain.services;
 
 import com.pocketpeers.backend.pbl.domain.model.valueobjects.GroupStats;
+import com.pocketpeers.backend.pbl.domain.model.valueobjects.NextLevelGoal;
 import com.pocketpeers.backend.pbl.domain.model.valueobjects.OutcomeRecord;
 import com.pocketpeers.backend.pbl.domain.model.valueobjects.ReputationLevel;
 import com.pocketpeers.backend.pbl.domain.model.valueobjects.ScoreParameters;
@@ -98,6 +99,86 @@ public final class PeerScoreCalculator {
 
         return new ScoreResult(score, band[0], band[1], level, effective, distinct,
                 posterior.alpha, posterior.beta, breakdown);
+    }
+
+    /**
+     * Evidencia que aporta un solo desenlace: su peso por monto, por su vigencia.
+     *
+     * <p>Es la misma cantidad que el calculo agrupa por contraparte en el paso 2,
+     * expuesta para que quien invoque pueda armar el mapa de evidencia inversa
+     * que exige {@link #calculate}. Sin esto, el llamador tendria que reimplementar
+     * la formula de peso y decaimiento, y cualquier ajuste de calibracion dejaria
+     * las dos direcciones midiendo cosas distintas: la reciprocidad compara
+     * ambas, y solo tiene sentido si estan en la misma escala.</p>
+     *
+     * <p>Sigue siendo una funcion pura: recibe el instante de calculo igual que
+     * {@code calculate}.</p>
+     */
+    public double evidenceMass(OutcomeRecord outcome,
+                               Map<Long, GroupStats> statsByGroup,
+                               GroupStats globalStats,
+                               LocalDateTime now) {
+        Map<Long, GroupStats> groupStats = statsByGroup == null ? Map.of() : statsByGroup;
+        return weigh(List.of(outcome), groupStats, globalStats, now).get(0).mass();
+    }
+
+    /**
+     * Que le falta al usuario para el siguiente nivel.
+     *
+     * <p>Vive aqui y no en {@code ScoreResult} porque las tres condiciones se
+     * leen de los mismos parametros de calibracion que {@link #resolveLevel}:
+     * duplicar los umbrales en otra clase seria la forma mas rapida de que un
+     * dia dejaran de coincidir con el nivel que efectivamente se otorga.</p>
+     *
+     * @return el objetivo inmediato, o null si el usuario ya esta en el nivel maximo
+     */
+    public NextLevelGoal nextLevelGoal(ScoreResult result) {
+        ReputationLevel target = switch (result.level()) {
+            case NEW -> ReputationLevel.BRONZE;
+            case BRONZE -> ReputationLevel.SILVER;
+            case SILVER -> ReputationLevel.GOLD;
+            case GOLD -> null;
+        };
+        if (target == null) {
+            return null;
+        }
+
+        double requiredScore = switch (target) {
+            case BRONZE -> params.bronzeScore();
+            case SILVER -> params.silverScore();
+            default -> params.goldScore();
+        };
+        double requiredCounterparties = switch (target) {
+            case BRONZE -> params.bronzeMinCounterparties();
+            case SILVER -> params.silverMinCounterparties();
+            default -> params.goldMinCounterparties();
+        };
+        // Bronce no exige certeza: a esa altura el sistema todavia no sabe
+        // suficiente de nadie, y pedir una banda estrecha lo volveria inalcanzable.
+        Double maxBandWidth = switch (target) {
+            case SILVER -> params.silverMaxBandWidth();
+            case GOLD -> params.goldMaxBandWidth();
+            default -> null;
+        };
+
+        return new NextLevelGoal(
+                target,
+                shortfall(result.score(), requiredScore),
+                shortfall(result.effectiveCounterparties(), requiredCounterparties),
+                maxBandWidth != null && !atMost(result.bandWidth(), maxBandWidth));
+    }
+
+    /**
+     * Cuanto falta para alcanzar un umbral, con la misma tolerancia que usa la
+     * resolucion de nivel.
+     *
+     * <p>Sin ella un usuario que ya cumple la condicion veria "te faltan
+     * 0.00000000003 contrapartes", que es el residuo del bucle de topes y no
+     * algo que pueda hacer al respecto.</p>
+     */
+    private static double shortfall(double actual, double required) {
+        double missing = required - actual;
+        return missing <= LEVEL_TOLERANCE ? 0.0 : missing;
     }
 
     // ------------------------------------------------------------------
