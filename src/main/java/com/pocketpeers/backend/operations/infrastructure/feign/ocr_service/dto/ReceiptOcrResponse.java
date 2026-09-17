@@ -10,6 +10,7 @@ public record ReceiptOcrResponse(
         String name,
         LocalDate issueDate,
         String receiptNumber,
+        String issuerRuc,
         Map<String, Object> dataFields
 
 ) {

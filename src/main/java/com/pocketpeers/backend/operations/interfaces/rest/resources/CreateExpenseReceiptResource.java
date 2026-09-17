@@ -11,6 +11,7 @@ public record CreateExpenseReceiptResource(
         @NotNull
         String name,
         String receiptNumber,
+        String issuerRuc,
         @NotNull
         BigDecimal amount,
         @NotNull

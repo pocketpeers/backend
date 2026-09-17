@@ -41,6 +41,13 @@ public class PaymentQueryServiceImpl implements PaymentQueryService {
     }
 
     @Override
+    public List<Payment> handle(GetAllPaymentsByGroupIdQuery query){
+        return paymentRepository.findAllByExpense_Group_Id(query.groupId()).stream()
+                .filter(this::isActiveExpensePayment)
+                .toList();
+    }
+
+    @Override
     public Optional<Payment> handle(GetPaymentByUserIdAndExpenseId query){
         return paymentRepository.findByUser_IdAndExpenseId(query.userId(), query.expenseId());
     }

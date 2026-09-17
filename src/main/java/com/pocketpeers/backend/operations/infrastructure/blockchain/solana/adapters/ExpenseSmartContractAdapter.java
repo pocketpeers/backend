@@ -55,11 +55,29 @@ public class ExpenseSmartContractAdapter implements ExpenseSmartContractPort {
     @Value("${solana.program.id}")
     private String programId;
 
-    private long obtenerSaldoBackend() throws Exception {
-        PublicKey walletKey = solanaClient.getSignerAccount().getPublicKey();
-        long saldoEnLamports = solanaClient.getRpcClient().getApi().getBalance(walletKey);
-        System.out.println("El saldo de la wallet es: " + (saldoEnLamports / 1_000_000_000.0) + " SOL");
-        return saldoEnLamports;
+    /**
+     * Informa el saldo de la wallet. Nunca falla hacia afuera.
+     *
+     * <p>Antes propagaba la excepcion, y como se llama al final de metodos
+     * anotados con {@code @Transactional} —despues de guardar el contrato y su
+     * transaccion—, un fallo aqui revertia esos guardados. El resultado era el
+     * peor posible: la cuenta quedaba creada en Solana, que no se puede
+     * deshacer, y la fila desaparecia de la base. Bastaba que el RPC de devnet
+     * respondiera un 429 por limite de peticiones, cosa nada rara justo despues
+     * de la rafaga de llamadas que hace el envio.</p>
+     *
+     * <p>Es un diagnostico: saber cuanto SOL queda importa porque si se agota
+     * los despliegues empiezan a fallar. Pero un diagnostico no puede tener
+     * autoridad para borrar datos de negocio, asi que se traga su propio error.</p>
+     */
+    private void obtenerSaldoBackend() {
+        try {
+            PublicKey walletKey = solanaClient.getSignerAccount().getPublicKey();
+            long saldoEnLamports = solanaClient.getRpcClient().getApi().getBalance(walletKey);
+            System.out.println("El saldo de la wallet es: " + (saldoEnLamports / 1_000_000_000.0) + " SOL");
+        } catch (Exception exception) {
+            System.out.println("No se pudo consultar el saldo de la wallet: " + exception.getMessage());
+        }
     }
 
     @Override

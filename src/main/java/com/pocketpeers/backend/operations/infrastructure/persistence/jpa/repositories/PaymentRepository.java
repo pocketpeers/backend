@@ -15,6 +15,17 @@ import java.time.LocalDate;
 
 @Repository
 public interface PaymentRepository extends JpaRepository<Payment, Long> {
+    /**
+     * Pagos de todos los gastos de un grupo.
+     *
+     * <p>El grafo de entidades trae de una vez el gasto, su grupo y el deudor,
+     * que es lo que el recurso necesita para serializarse. Sin el, con
+     * open-in-view activo cada pago dispararia sus propias consultas al
+     * convertirse a JSON y el remedio saldria peor que la enfermedad.</p>
+     */
+    @EntityGraph(attributePaths = {"evidences", "expense", "expense.group", "expense.user", "user"})
+    List<Payment> findAllByExpense_Group_Id(Long groupId);
+
     @EntityGraph(attributePaths = {"evidences", "expense", "expense.group", "expense.user", "user"})
     Optional<Payment> findById(Long id);
 

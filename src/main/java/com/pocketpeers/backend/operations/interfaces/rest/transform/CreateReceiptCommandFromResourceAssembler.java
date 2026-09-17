@@ -21,6 +21,7 @@ public class CreateReceiptCommandFromResourceAssembler {
         return new CreateReceiptForExpenseCommand(
                 receipt.name(),
                 receipt.receiptNumber(),
+                receipt.issuerRuc(),
                 receipt.amount(),
                 receipt.issueDate(),
                 receipt.imagePath(),

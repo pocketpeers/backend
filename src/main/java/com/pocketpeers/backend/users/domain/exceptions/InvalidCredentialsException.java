@@ -9,6 +9,6 @@ package com.pocketpeers.backend.users.domain.exceptions;
  */
 public class InvalidCredentialsException extends RuntimeException {
     public InvalidCredentialsException() {
-        super("Usuario o contrasena incorrectos");
+        super("Usuario o contraseña incorrectos");
     }
 }

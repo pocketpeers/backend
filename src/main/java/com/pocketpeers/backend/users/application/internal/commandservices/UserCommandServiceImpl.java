@@ -239,7 +239,7 @@ public class UserCommandServiceImpl implements UserCommandService {
 
         requireStrongPassword(command.newPassword());
         if (hashingService.matches(command.newPassword(), user.getPassword())) {
-            throw new WeakPasswordException("La contrasena nueva debe ser distinta de la actual");
+            throw new WeakPasswordException("La contraseña nueva debe ser distinta de la actual");
         }
 
         user.setPassword(hashingService.encode(command.newPassword()));

@@ -40,7 +40,7 @@ class PasswordSecurityTest {
     void elMotivoDelRechazoEsUtil() {
         assertTrue(PasswordPolicy.validationError("corta1").contains("8 caracteres"));
         assertTrue(PasswordPolicy.validationError("12345678").contains("letra"));
-        assertTrue(PasswordPolicy.validationError("solotexto").contains("numero"));
+        assertTrue(PasswordPolicy.validationError("solotexto").contains("número"));
         assertNotNull(PasswordPolicy.validationError(""));
         assertNotNull(PasswordPolicy.validationError(null));
     }

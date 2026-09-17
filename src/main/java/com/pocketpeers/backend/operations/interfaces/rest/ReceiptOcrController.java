@@ -34,8 +34,11 @@ public class ReceiptOcrController {
     @PostMapping("/from-image")
     public ResponseEntity<ReceiptOcrResource> getReceiptOcrFromImageUrl(@RequestBody CreateOcrReceiptFromImageResource resource) {
         var command = new CreateOcrReceiptFromImageCommand(resource.imageId());
-        var receiptOcr = receiptCommandService.handle(command);
-        var receiptOcrResource = ReceiptResourceFromEntityAssembler.toResourceFromEntity(receiptOcr);
+        var preview = receiptCommandService.handle(command);
+        // Se responde 200 aun con duplicado: el cuerpo lleva lo que el OCR leyo
+        // y el aviso juntos, para que la pantalla pueda mostrar que boleta es y
+        // por que la rechaza. Un 409 aqui devolveria el motivo sin los datos.
+        var receiptOcrResource = ReceiptResourceFromEntityAssembler.toResourceFromEntity(preview);
         return ResponseEntity.ok(receiptOcrResource);
     }
 }

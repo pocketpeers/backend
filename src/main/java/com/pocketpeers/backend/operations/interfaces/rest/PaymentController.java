@@ -17,6 +17,7 @@ import com.pocketpeers.backend.operations.interfaces.rest.transform.CreatePaymen
 import com.pocketpeers.backend.operations.interfaces.rest.transform.PaymentResourceFromEntityAssembler;
 import com.pocketpeers.backend.shared.interfaces.rest.resources.MessageResource;
 import com.pocketpeers.backend.users.infrastructure.persistence.jpa.repositories.UserRepository;
+import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -92,6 +93,22 @@ public class PaymentController {
     public ResponseEntity<List<PaymentResource>> getPaymentByExpenseId(@PathVariable Long expenseId) {
         var getAllPaymentsByExpenseIdQuery = new GetAllPaymentsByExpenseIdQuery(expenseId);
         var payments = paymentQueryService.handle(getAllPaymentsByExpenseIdQuery);
+        var paymentResources = payments.stream().map(this::toPaymentResource).toList();
+        return ResponseEntity.ok(paymentResources);
+    }
+
+    /**
+     * Todos los pagos de un grupo, de un viaje.
+     *
+     * <p>El resumen de grupo los pedia gasto por gasto y de forma secuencial:
+     * un grupo con veinte gastos hacia veinte peticiones encadenadas antes de
+     * poder dibujar el grafico. Con esta, el cliente hace una.</p>
+     */
+    @GetMapping("/group/{groupId}")
+    @Operation(summary = "Get all payments of a group")
+    public ResponseEntity<List<PaymentResource>> getPaymentsByGroupId(@PathVariable Long groupId) {
+        var query = new GetAllPaymentsByGroupIdQuery(groupId);
+        var payments = paymentQueryService.handle(query);
         var paymentResources = payments.stream().map(this::toPaymentResource).toList();
         return ResponseEntity.ok(paymentResources);
     }

@@ -11,6 +11,7 @@ public interface PaymentQueryService {
     Optional<Payment> handle(GetPaymentByIdQuery query);
     List<Payment> handle(GetAllPaymentsByUserIdQuery query);
     List<Payment> handle(GetAllPaymentsByExpenseIdQuery query);
+    List<Payment> handle(GetAllPaymentsByGroupIdQuery query);
     Optional<Payment> handle(GetPaymentByUserIdAndExpenseId query);
     List<Payment> handle(GetAllPaymentsByUserIdAndStatusQuery query);
 

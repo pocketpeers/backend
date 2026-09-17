@@ -1,5 +1,6 @@
 package com.pocketpeers.backend.shared.interfaces.rest.exceptions;
 
+import com.pocketpeers.backend.operations.domain.exceptions.DuplicateReceiptException;
 import com.pocketpeers.backend.users.domain.exceptions.CurrentPasswordMismatchException;
 import com.pocketpeers.backend.users.domain.exceptions.InvalidCredentialsException;
 import com.pocketpeers.backend.users.domain.exceptions.InvalidPasswordResetCodeException;
@@ -76,6 +77,25 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(InvalidPasswordResetCodeException.class)
     public ResponseEntity<Map<String,String>> handle(InvalidPasswordResetCodeException ex) {
         return error("Bad Request", ex.getMessage(), HttpStatus.BAD_REQUEST);
+    }
+
+    /**
+     * Comprobante ya registrado: 409, con el gasto en conflicto en el cuerpo.
+     *
+     * <p>Va aparte del 400 generico porque no es un campo mal enviado sino un
+     * choque con algo que ya existe, y porque la aplicacion movil necesita los
+     * identificadores para poder ofrecer "ver el gasto donde ya esta" en vez de
+     * limitarse a mostrar el texto del error.</p>
+     */
+    @ExceptionHandler(DuplicateReceiptException.class)
+    public ResponseEntity<Map<String,String>> handle(DuplicateReceiptException ex) {
+        Map<String, String> body = new HashMap<>();
+        body.put("error", "Conflict");
+        body.put("message", ex.getMessage());
+        body.put("signal", ex.getSignal().name());
+        body.put("conflictingReceiptId", String.valueOf(ex.getConflictingReceiptId()));
+        body.put("conflictingExpenseId", String.valueOf(ex.getConflictingExpenseId()));
+        return new ResponseEntity<>(body, HttpStatus.CONFLICT);
     }
 
     @ExceptionHandler(RuntimeException.class)

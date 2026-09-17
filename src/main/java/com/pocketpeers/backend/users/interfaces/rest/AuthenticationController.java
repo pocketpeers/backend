@@ -88,14 +88,14 @@ public class AuthenticationController {
     /**
      * Canjea el codigo recibido por correo por una contrasena nueva.
      */
-    @Operation(summary = "Confirmar recuperacion de contrasena",
-            description = "Valida el codigo y establece la contrasena nueva.")
+    @Operation(summary = "Confirmar recuperación de contraseña",
+            description = "Valida el código y establece la contraseña nueva.")
     @PostMapping("/password-reset/confirm")
     public ResponseEntity<MessageResource> confirmPasswordReset(
             @RequestBody ConfirmPasswordResetResource resource) {
         userCommandService.handle(new ConfirmPasswordResetCommand(
                 resource.email(), resource.code(), resource.newPassword()));
-        return ResponseEntity.ok(new MessageResource("Tu contrasena fue actualizada."));
+        return ResponseEntity.ok(new MessageResource("Tu contraseña fue actualizada."));
     }
 
     /**
@@ -105,8 +105,8 @@ public class AuthenticationController {
      * cuerpo, cualquiera con una sesion valida podria cambiarle la contrasena a
      * otra persona.</p>
      */
-    @Operation(summary = "Cambiar contrasena",
-            description = "Requiere sesion iniciada y conocer la contrasena actual.")
+    @Operation(summary = "Cambiar contraseña",
+            description = "Requiere sesión iniciada y conocer la contraseña actual.")
     @PutMapping("/password")
     public ResponseEntity<MessageResource> changePassword(
             @RequestBody ChangePasswordResource resource) {
@@ -116,6 +116,6 @@ public class AuthenticationController {
         }
         userCommandService.handle(new ChangePasswordCommand(
                 authentication.getName(), resource.currentPassword(), resource.newPassword()));
-        return ResponseEntity.ok(new MessageResource("Tu contrasena fue actualizada."));
+        return ResponseEntity.ok(new MessageResource("Tu contraseña fue actualizada."));
     }
 }

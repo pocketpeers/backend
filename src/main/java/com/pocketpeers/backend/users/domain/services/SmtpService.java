@@ -16,6 +16,16 @@ public class SmtpService {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(SmtpService.class);
 
+    /**
+     * Juego de caracteres de los correos que salen de aqui.
+     *
+     * <p>Sin declararlo, el Content-Type sale sin charset y cada cliente de
+     * correo adivina: los textos en español llegan con "contrase&#xC3;&#xB1;a"
+     * en vez de "contraseña". Fijarlo es la unica forma de que la eñe y las
+     * tildes se vean igual en Gmail, Outlook y el resto.</p>
+     */
+    private static final String MAIL_ENCODING = "UTF-8";
+
     @Autowired
     private JavaMailSender emailSender;
 
@@ -36,7 +46,7 @@ public class SmtpService {
 
     public void sendWelcomeEmail(String to, String name) throws MessagingException {
         MimeMessage message = emailSender.createMimeMessage();
-        MimeMessageHelper helper = new MimeMessageHelper(message, true);
+        MimeMessageHelper helper = new MimeMessageHelper(message, true, MAIL_ENCODING);
         applySender(helper);
         helper.setTo(to);
         helper.setSubject("¡Bienvenido a Pockets Partner!");
@@ -74,10 +84,10 @@ public class SmtpService {
      */
     public void sendPasswordResetEmail(String to, String name, String code) throws MessagingException {
         MimeMessage message = emailSender.createMimeMessage();
-        MimeMessageHelper helper = new MimeMessageHelper(message, true);
+        MimeMessageHelper helper = new MimeMessageHelper(message, true, MAIL_ENCODING);
         applySender(helper);
         helper.setTo(to);
-        helper.setSubject("Codigo para restablecer tu contrasena");
+        helper.setSubject("Código para restablecer tu contraseña");
         helper.setText(buildPasswordResetMessage(name, code), true);
         emailSender.send(message);
     }
@@ -126,20 +136,20 @@ public class SmtpService {
                 " border-radius:8px; padding:28px;'>" +
                 "<h2 style='color:#0B2545; margin:0 0 12px;'>Hola " + name + ",</h2>" +
                 "<p style='color:#334; line-height:1.6; margin:0 0 20px;'>" +
-                "Recibimos una solicitud para restablecer tu contrasena en PocketPeers. " +
-                "Ingresa este codigo en la aplicacion:</p>" +
+                "Recibimos una solicitud para restablecer tu contraseña en PocketPeers. " +
+                "Ingresa este código en la aplicación:</p>" +
                 "<div style='text-align:center; margin:24px 0;'>" +
                 "<span style='display:inline-block; font-size:34px; font-weight:bold; letter-spacing:10px;" +
                 " color:#134074; background:#F4F7F8; border:1px solid #D8E1E7; border-radius:8px;" +
                 " padding:16px 24px;'>" + code + "</span>" +
                 "</div>" +
                 "<p style='color:#556; line-height:1.6; margin:0 0 8px;'>" +
-                "El codigo vence en " +
+                "El código vence en " +
                 com.pocketpeers.backend.users.domain.model.entities.PasswordResetCode.EXPIRATION_MINUTES +
                 " minutos y solo se puede usar una vez.</p>" +
                 "<p style='color:#556; line-height:1.6; margin:16px 0 0;'>" +
-                "<strong>Si no pediste este cambio</strong>, puedes ignorar este correo: tu contrasena " +
-                "actual sigue funcionando y nadie puede cambiarla sin este codigo.</p>" +
+                "<strong>Si no pediste este cambio</strong>, puedes ignorar este correo: tu contraseña " +
+                "actual sigue funcionando y nadie puede cambiarla sin este código.</p>" +
                 "<hr style='border:0; border-top:1px solid #D8E1E7; margin:24px 0;'>" +
                 "<p style='font-size:12px; color:#8a97a0; margin:0;'>Equipo de PocketPeers</p>" +
                 "</div>" +

@@ -10,6 +10,7 @@ public class ReceiptOcrMapper {
         return new OcrReceipt(
                 response.name(),
                 response.receiptNumber(),
+                response.issuerRuc(),
                 response.amount(),
                 response.issueDate(),
                 response.imagePath(),

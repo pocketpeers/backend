@@ -1,6 +1,7 @@
 package com.pocketpeers.backend.shared.application.services;
 
 import com.pocketpeers.backend.shared.domain.model.entities.Image;
+import com.pocketpeers.backend.shared.domain.services.ImageFingerprinter;
 import com.pocketpeers.backend.shared.domain.services.ImageService;
 import com.pocketpeers.backend.shared.infrastructure.persistence.jpa.repositories.ImageRepository;
 import lombok.AllArgsConstructor;
@@ -18,6 +19,7 @@ import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.util.Iterator;
+import java.util.Optional;
 import java.util.UUID;
 
 @Service
@@ -34,10 +36,22 @@ public class ImageServiceImpl implements ImageService {
     public UUID uploadImage(MultipartFile imageFile) throws IOException {
         var processedImage = compressImage(imageFile);
 
+        // La huella se calcula aqui porque es el unico punto del sistema donde
+        // los bytes y la imagen decodificada estan los dos en memoria. Hacerlo
+        // al crear el comprobante obligaria a releer la fila y a decodificar de
+        // nuevo; pedirsela al cliente la volveria falsificable, que es
+        // justamente lo que este control existe para impedir.
+        var fingerprint = ImageFingerprinter.fingerprint(
+                processedImage.data(),
+                processedImage.decoded()
+        );
+
         Image image = new Image();
         image.setName(processedImage.name());
         image.setData(processedImage.data());
         image.setContentType(processedImage.contentType());
+        image.setSha256(fingerprint.sha256());
+        image.setPerceptualHash(fingerprint.perceptualHash());
 
         imageRepository.save(image);
         return image.getId();
@@ -48,6 +62,11 @@ public class ImageServiceImpl implements ImageService {
         Image image = imageRepository.findById(imageId)
                 .orElseThrow(()-> new RuntimeException("Image not found with id:"+imageId));
         return image;
+    }
+
+    @Override
+    public Optional<Image> findImageById(UUID imageId) {
+        return imageRepository.findById(imageId);
     }
 
     @Override
@@ -64,7 +83,8 @@ public class ImageServiceImpl implements ImageService {
             return new ProcessedImage(
                     originalData,
                     originalContentType,
-                    imageFile.getOriginalFilename()
+                    imageFile.getOriginalFilename(),
+                    null
             );
         }
 
@@ -73,7 +93,8 @@ public class ImageServiceImpl implements ImageService {
             return new ProcessedImage(
                     originalData,
                     originalContentType,
-                    imageFile.getOriginalFilename()
+                    imageFile.getOriginalFilename(),
+                    null
             );
         }
 
@@ -82,17 +103,23 @@ public class ImageServiceImpl implements ImageService {
         byte[] compressedData = writeJpeg(jpegImage);
 
         if (compressedData.length >= originalData.length) {
+            // Se guardan los bytes originales por ser mas chicos, pero la huella
+            // perceptual se toma igual de la forma canonica: asi dos
+            // codificaciones distintas de la misma foto dan el mismo hash aunque
+            // una tome esta rama y la otra no.
             return new ProcessedImage(
                     originalData,
                     originalContentType,
-                    imageFile.getOriginalFilename()
+                    imageFile.getOriginalFilename(),
+                    jpegImage
             );
         }
 
         return new ProcessedImage(
                 compressedData,
                 JPEG_CONTENT_TYPE,
-                withJpegExtension(imageFile.getOriginalFilename())
+                withJpegExtension(imageFile.getOriginalFilename()),
+                jpegImage
         );
     }
 
@@ -175,6 +202,7 @@ public class ImageServiceImpl implements ImageService {
         return originalFilename.substring(0, extensionIndex) + ".jpg";
     }
 
-    private record ProcessedImage(byte[] data, String contentType, String name) {
+    /** {@code decoded} es null cuando el archivo no es una imagen decodificable. */
+    private record ProcessedImage(byte[] data, String contentType, String name, BufferedImage decoded) {
     }
 }

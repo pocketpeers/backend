@@ -11,6 +11,6 @@ package com.pocketpeers.backend.users.domain.exceptions;
  */
 public class CurrentPasswordMismatchException extends RuntimeException {
     public CurrentPasswordMismatchException() {
-        super("La contrasena actual no es correcta");
+        super("La contraseña actual no es correcta");
     }
 }

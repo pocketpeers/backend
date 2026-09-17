@@ -26,21 +26,21 @@ public final class PasswordPolicy {
      */
     public static String validationError(String password) {
         if (password == null || password.isBlank()) {
-            return "La contrasena no puede estar vacia";
+            return "La contraseña no puede estar vacía";
         }
         if (password.length() < MIN_LENGTH) {
-            return "La contrasena debe tener al menos " + MIN_LENGTH + " caracteres";
+            return "La contraseña debe tener al menos " + MIN_LENGTH + " caracteres";
         }
         // BCrypt ignora todo lo que pase de 72 bytes: aceptar una clave mas larga
         // daria la falsa impresion de que los caracteres extra protegen algo.
         if (password.length() > MAX_LENGTH) {
-            return "La contrasena no puede tener mas de " + MAX_LENGTH + " caracteres";
+            return "La contraseña no puede tener más de " + MAX_LENGTH + " caracteres";
         }
         if (password.chars().noneMatch(Character::isLetter)) {
-            return "La contrasena debe incluir al menos una letra";
+            return "La contraseña debe incluir al menos una letra";
         }
         if (password.chars().noneMatch(Character::isDigit)) {
-            return "La contrasena debe incluir al menos un numero";
+            return "La contraseña debe incluir al menos un número";
         }
         return null;
     }
