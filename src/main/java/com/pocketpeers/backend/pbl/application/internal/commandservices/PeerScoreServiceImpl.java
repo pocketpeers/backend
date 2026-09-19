@@ -15,12 +15,15 @@ import com.pocketpeers.backend.users.infrastructure.persistence.jpa.repositories
 import jakarta.transaction.Transactional;
 import org.springframework.stereotype.Service;
 
+import java.time.Duration;
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 @Service
 public class PeerScoreServiceImpl implements PeerScoreService {
@@ -49,19 +52,83 @@ public class PeerScoreServiceImpl implements PeerScoreService {
         this.properties = properties;
     }
 
+    /**
+     * Ultimo score calculado por usuario, con el instante en que se calculo.
+     *
+     * <p>Solo sirve a {@link #recalculate(Long)}, que es la ruta de lectura: el
+     * panel la invoca en cada carga y recalcular desde el historial completo
+     * cada vez se nota con cientos de usuarios. Las rutas de escritura no la
+     * consultan nunca, y ademas la invalidan.</p>
+     */
+    private final Map<Long, CachedScore> scoreCache = new ConcurrentHashMap<>();
+
+    /** Tope de seguridad para que la cache no crezca sin limite. */
+    private static final int MAX_CACHED_SCORES = 10_000;
+
+    private record CachedScore(ScoreResult result, Instant computedAt) {
+    }
+
     @Override
     @Transactional
     public ScoreResult recalculate(Long userId) {
+        var cached = cachedScoreFor(userId);
+        if (cached != null) {
+            return cached;
+        }
         var recalculation = recalculate(userId, groupStatsProvider.snapshot(), LocalDateTime.now());
         if (recalculation == null) {
             throw new RuntimeException("User not found");
         }
+        rememberScore(userId, recalculation.result());
         return recalculation.result();
+    }
+
+    private ScoreResult cachedScoreFor(Long userId) {
+        long ttl = properties.getScoreCacheSeconds();
+        if (ttl <= 0) {
+            return null;
+        }
+        var entry = scoreCache.get(userId);
+        if (entry == null) {
+            return null;
+        }
+        if (Duration.between(entry.computedAt(), Instant.now()).getSeconds() >= ttl) {
+            scoreCache.remove(userId);
+            return null;
+        }
+        return entry.result();
+    }
+
+    private void rememberScore(Long userId, ScoreResult result) {
+        if (properties.getScoreCacheSeconds() <= 0) {
+            return;
+        }
+        // Vaciarla entera al pasarse del tope es mas barato que llevar orden de
+        // antiguedad, y el efecto es un recalculo extra por usuario activo.
+        if (scoreCache.size() >= MAX_CACHED_SCORES) {
+            scoreCache.clear();
+        }
+        scoreCache.put(userId, new CachedScore(result, Instant.now()));
+    }
+
+    /**
+     * Invalida lo cacheado tras un cambio real.
+     *
+     * <p>Es lo que hace aceptable la cache: un pago se refleja de inmediato en
+     * lugar de esperar a que expire la ventana.</p>
+     */
+    private void forgetScores(Long... userIds) {
+        for (Long userId : userIds) {
+            if (userId != null) {
+                scoreCache.remove(userId);
+            }
+        }
     }
 
     @Override
     @Transactional
     public void recalculateAfterEvent(Long userId, Long counterpartyId) {
+        forgetScores(userId, counterpartyId);
         // Una sola foto para los dos: si se tomaran por separado y las
         // estadisticas cambiaran en medio, cada uno quedaria medido con una regla
         // distinta justo en el momento en que se los compara entre si.
@@ -80,6 +147,7 @@ public class PeerScoreServiceImpl implements PeerScoreService {
     @Override
     @Transactional
     public List<Long> recalculateAll() {
+        scoreCache.clear();
         var stats = groupStatsProvider.snapshot();
         var now = LocalDateTime.now();
 
@@ -97,6 +165,7 @@ public class PeerScoreServiceImpl implements PeerScoreService {
     @Override
     @Transactional
     public Map<Long, ScoreResult> recalculateFor(List<Long> userIds) {
+        forgetScores(userIds.toArray(new Long[0]));
         // Una sola foto y un solo instante para todo el conjunto, por el mismo
         // motivo que recalculateAfterEvent: estos resultados se van a comparar
         // entre si, y medir a cada uno con estadisticas o con un reloj distinto

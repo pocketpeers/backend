@@ -1,9 +1,12 @@
 package com.pocketpeers.backend.users.infrastructure.authorization.sfs.configuration;
 
+import com.pocketpeers.backend.shared.infrastructure.security.ImageWriteAuthorizationFilter;
 import com.pocketpeers.backend.users.infrastructure.authorization.sfs.pipeline.BearerAuthorizationRequestFilter;
 import com.pocketpeers.backend.users.infrastructure.hashing.bcypt.BCryptHashingService;
 import com.pocketpeers.backend.users.infrastructure.tokens.jwt.BearerTokenService;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.env.Environment;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.authentication.AuthenticationManager;
@@ -18,6 +21,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.AuthenticationEntryPoint;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.util.StringUtils;
 import org.springframework.web.cors.CorsConfiguration;
 
 import java.util.List;
@@ -47,6 +51,32 @@ public class WebSecurityConfiguration {
      * This method creates the Bearer Authorization Request Filter.
      * @return The Bearer Authorization Request Filter
      */
+    /**
+     * Token compartido con el servicio de OCR. Vacio en desarrollo local.
+     *
+     * <p>Se llama igual que la variable de entorno {@code SERVICE_TOKEN} que ya
+     * usan el Caddyfile y el Space de Hugging Face, para que las tres puntas
+     * lean el mismo valor sin traducciones de nombre por el camino.</p>
+     */
+    @Value("${app.images.service-token:${SERVICE_TOKEN:}}")
+    private String imageServiceToken;
+
+    /**
+     * Fuera de desarrollo la credencial es obligatoria.
+     *
+     * <p>En local no hay proxy ni token y el OCR corre en la misma red, asi que
+     * exigirlo obligaria a configurarlo solo para levantar el proyecto. Con un
+     * perfil desplegado el endpoint es publico y ahi no se negocia: si falta el
+     * token la escritura se rechaza, en vez de quedar abierta en silencio.</p>
+     */
+    @Bean
+    public ImageWriteAuthorizationFilter imageWriteAuthorizationFilter(Environment environment) {
+        boolean development = List.of(environment.getActiveProfiles()).contains("dev")
+                || environment.getActiveProfiles().length == 0;
+        boolean enforced = !development || StringUtils.hasText(imageServiceToken);
+        return new ImageWriteAuthorizationFilter(imageServiceToken, enforced);
+    }
+
     @Bean
     public BearerAuthorizationRequestFilter authorizationRequestFilter() {
         return new BearerAuthorizationRequestFilter(tokenService, userDetailsService);
@@ -91,7 +121,9 @@ public class WebSecurityConfiguration {
      * @return The security filter chain
      */
     @Bean
-    public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
+    public SecurityFilterChain filterChain(HttpSecurity http,
+                                           ImageWriteAuthorizationFilter imageWriteAuthorizationFilter)
+            throws Exception {
         http.cors(configurer -> configurer.configurationSource(x -> {
             var cors = new CorsConfiguration();
             cors.setAllowedOrigins(List.of("*"));
@@ -119,6 +151,10 @@ public class WebSecurityConfiguration {
                         .anyRequest().authenticated());
         http.authenticationProvider(authenticationProvider());
         http.addFilterBefore(authorizationRequestFilter(), UsernamePasswordAuthenticationFilter.class);
+        // Despues del filtro del JWT a proposito: para cuando corre, el contexto
+        // de seguridad ya tiene al usuario resuelto y el filtro puede exigir una
+        // sesion real en vez de limitarse a mirar si la cabecera existe.
+        http.addFilterAfter(imageWriteAuthorizationFilter, BearerAuthorizationRequestFilter.class);
         return http.build();
 
     }

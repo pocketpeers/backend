@@ -15,6 +15,15 @@ public interface ReputationEventRepository extends JpaRepository<ReputationEvent
     List<ReputationEvent> findAllByUser_IdAndOccurredAtAfterOrderByOccurredAtDesc(Long userId, LocalDateTime from);
     boolean existsByPaymentIdAndType(Long paymentId, ReputationEventType type);
 
+    /**
+     * Cuantos eventos de un tipo acumula un usuario.
+     *
+     * <p>La usan las insignias que se ganan por repeticion y no por un evento
+     * puntual. Cuenta en base de datos en vez de traer las filas porque el
+     * historial crece sin tope y aqui solo interesa el numero.</p>
+     */
+    long countByUser_IdAndType(Long userId, ReputationEventType type);
+
     // Consultas de PeerScore. Las tres piden `counterpartyId` y `amount` no
     // nulos porque son los eventos que describen el desenlace de una
     // obligacion; los demas solo desbloquean insignias y no son evidencia.

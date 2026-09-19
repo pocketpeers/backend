@@ -14,6 +14,7 @@ import com.pocketpeers.backend.operations.domain.services.ExpenseQueryService;
 import com.pocketpeers.backend.operations.domain.services.PaymentCommandService;
 import com.pocketpeers.backend.operations.domain.services.PaymentQueryService;
 import com.pocketpeers.backend.operations.infrastructure.persistence.jpa.repositories.ContractTransactionRepository;
+import com.pocketpeers.backend.operations.interfaces.rest.resources.BlockchainStatusResource;
 import com.pocketpeers.backend.operations.interfaces.rest.resources.CreateExpenseResource;
 import com.pocketpeers.backend.operations.interfaces.rest.resources.CreateExpenseWithPaymentsResource;
 import com.pocketpeers.backend.operations.interfaces.rest.resources.ExpenseResource;
@@ -174,6 +175,23 @@ public class ExpensesController {
         if(updatedExpense.isEmpty()) return ResponseEntity.badRequest().build();
         var expenseResource = toExpenseResource(updatedExpense.get());
         return ResponseEntity.ok(expenseResource);
+    }
+
+    /**
+     * Cuanto le falta al grupo para tener todo en cadena.
+     *
+     * <p>Endpoint de sondeo, pensado para que la app pregunte esto y nada mas
+     * mientras espera los hashes. Antes lo averiguaba recargando la lista de
+     * gastos, la de pagos, el resumen y, por cada gasto, el gasto y sus pagos:
+     * con diez gastos, veintitres peticiones cada tres segundos y por usuario.
+     * Aqui son dos conteos, y la app recarga los datos reales una sola vez,
+     * cuando el contador llega a cero.</p>
+     */
+    @GetMapping("/groupId/{groupId}/blockchain-status")
+    public ResponseEntity<BlockchainStatusResource> getBlockchainStatus(@PathVariable Long groupId) {
+        return ResponseEntity.ok(BlockchainStatusResource.of(
+                contractTransactionRepository.countExpensesWithoutHash(groupId),
+                contractTransactionRepository.countPaymentsWithoutHash(groupId)));
     }
 
     @GetMapping("/groupId/{groupId}")

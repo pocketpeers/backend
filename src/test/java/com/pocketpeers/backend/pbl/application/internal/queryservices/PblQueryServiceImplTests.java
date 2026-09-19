@@ -80,7 +80,7 @@ class PblQueryServiceImplTests {
     private PblQueryServiceImpl service(boolean peerScoreEnabled) {
         return new PblQueryServiceImpl(userRepository, userReputationRepository, reputationEventRepository,
                 badgeCatalogRepository, userBadgeRepository, groupMemberRepository, userInformationRepository,
-                peerScoreService, new PeerScoreProperties(peerScoreEnabled, "v1", 0.5, 600));
+                peerScoreService, new PeerScoreProperties(peerScoreEnabled, "v1", 0.5, 600, 0));
     }
 
     @Test

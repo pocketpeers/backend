@@ -3,6 +3,8 @@ package com.pocketpeers.backend.pbl.application.internal.commandservices;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.atLeast;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -25,6 +27,7 @@ import com.pocketpeers.backend.pbl.infrastructure.persistence.jpa.repositories.R
 import com.pocketpeers.backend.pbl.infrastructure.persistence.jpa.repositories.UserReputationRepository;
 import com.pocketpeers.backend.users.domain.model.aggregates.User;
 import com.pocketpeers.backend.users.infrastructure.persistence.jpa.repositories.UserRepository;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
@@ -64,11 +67,70 @@ class PeerScoreServiceImplTests {
 
     private PeerScoreServiceImpl service() {
         if (service == null) {
+            // Cache desactivada (el ultimo 0) para que las pruebas existentes
+            // midan el calculo y no lo que quedo guardado de la llamada previa.
             service = new PeerScoreServiceImpl(userRepository, userReputationRepository,
                     reputationEventRepository, groupStatsProvider,
-                    new PeerScoreProperties(true, "v1", 0.5, 600));
+                    new PeerScoreProperties(true, "v1", 0.5, 600, 0));
         }
         return service;
+    }
+
+    /** Servicio con la cache de lectura activa, para las pruebas que la ejercitan. */
+    private PeerScoreServiceImpl serviceWithCache(long seconds) {
+        return new PeerScoreServiceImpl(userRepository, userReputationRepository,
+                reputationEventRepository, groupStatsProvider,
+                new PeerScoreProperties(true, "v1", 0.5, 600, seconds));
+    }
+
+    @Test
+    @DisplayName("Con cache activa, dos lecturas seguidas recalculan una sola vez")
+    void laCacheEvitaElSegundoRecalculo() {
+        givenReputationFor(PAYER);
+        givenStats();
+        givenHistory(punctualHistory(10, 3));
+        givenNoReverseEvidence();
+
+        var cached = serviceWithCache(60);
+        var first = cached.recalculate(PAYER);
+        var second = cached.recalculate(PAYER);
+
+        assertThat(second.score()).isEqualTo(first.score());
+        // El historial se lee una vez: la segunda lectura no toca la base.
+        verify(reputationEventRepository, times(1)).findAllByUser_IdAndCounterpartyIdIsNotNullAndAmountIsNotNull(PAYER);
+    }
+
+    @Test
+    @DisplayName("Un evento invalida la cache: el pago se refleja sin esperar a que expire")
+    void unEventoInvalidaLaCache() {
+        givenReputationFor(PAYER);
+        givenStats();
+        givenHistory(punctualHistory(10, 3));
+        givenNoReverseEvidence();
+
+        var cached = serviceWithCache(60);
+        cached.recalculate(PAYER);
+        cached.recalculateAfterEvent(PAYER, null);
+        cached.recalculate(PAYER);
+
+        // Tres lecturas del historial: la inicial, la del evento y la de
+        // despues. Sin invalidacion, la ultima habria devuelto lo cacheado.
+        verify(reputationEventRepository, atLeast(3)).findAllByUser_IdAndCounterpartyIdIsNotNullAndAmountIsNotNull(PAYER);
+    }
+
+    @Test
+    @DisplayName("Con cache en cero se recalcula siempre, como antes")
+    void cacheDesactivadaRecalculaSiempre() {
+        givenReputationFor(PAYER);
+        givenStats();
+        givenHistory(punctualHistory(10, 3));
+        givenNoReverseEvidence();
+
+        var sinCache = serviceWithCache(0);
+        sinCache.recalculate(PAYER);
+        sinCache.recalculate(PAYER);
+
+        verify(reputationEventRepository, times(2)).findAllByUser_IdAndCounterpartyIdIsNotNullAndAmountIsNotNull(PAYER);
     }
 
     @Test

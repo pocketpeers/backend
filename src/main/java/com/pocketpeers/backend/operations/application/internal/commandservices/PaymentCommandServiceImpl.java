@@ -281,6 +281,8 @@ public class PaymentCommandServiceImpl implements PaymentCommandService {
             case GROUP_CREATED -> "Collaborative microfinance group created successfully";
             case JUST_IN_TIME_PAYMENT -> "Payment made less than one hour before expense close";
             case ZERO_DEBT -> "Month closed with no pending debts or commitments";
+            case RECEIPT_ATTACHED -> "Expense registered with its supporting receipt";
+            case PAYMENT_CONFIRMED -> "Payment confirmed by the person who received the money";
         };
     }
 }

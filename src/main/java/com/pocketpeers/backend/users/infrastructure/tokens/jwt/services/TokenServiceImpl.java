@@ -4,6 +4,7 @@ import com.pocketpeers.backend.users.infrastructure.tokens.jwt.BearerTokenServic
 import io.jsonwebtoken.*;
 import io.jsonwebtoken.security.Keys;
 import io.jsonwebtoken.security.SignatureException;
+import jakarta.annotation.PostConstruct;
 import jakarta.servlet.http.HttpServletRequest;
 import org.apache.commons.lang3.time.DateUtils;
 import org.slf4j.Logger;
@@ -35,6 +36,46 @@ public class TokenServiceImpl implements BearerTokenService {
 
     @Value("${authorization.jwt.expiration.days}")
     private int expirationDays;
+
+    /**
+     * Fragmento del secreto de plantilla que el repositorio trae por defecto.
+     *
+     * <p>Se compara por fragmento y no por igualdad para que un despliegue que
+     * lo haya copiado con un sufijo tampoco pase.</p>
+     */
+    private static final String TEMPLATE_SECRET_MARKER = "WriteHereYourSecret";
+
+    /** Minimo de HS256: 256 bits. Por debajo, jjwt rechaza la clave. */
+    private static final int MINIMUM_SECRET_BYTES = 32;
+
+    /**
+     * Rechaza arrancar con un secreto que no firma nada de verdad.
+     *
+     * <p>La comprobacion va al arranque y no en la primera firma a proposito. Con
+     * el secreto de plantilla la aplicacion levantaba sin protestar y emitia
+     * tokens validos: cualquiera que conozca ese valor —esta en el repositorio—
+     * puede firmarse uno como cualquier usuario. El fallo no aparecia en ningun
+     * log porque, tecnicamente, nada fallaba.</p>
+     *
+     * <p>En produccion el valor llega por {@code AUTHORIZATION_JWT_SECRET}. Si
+     * esa variable falta, lo que se usa es el del repositorio; caerse aqui
+     * convierte ese olvido en un arranque fallido y no en una puerta abierta.</p>
+     */
+    @PostConstruct
+    void rejectInsecureSecret() {
+        if (!StringUtils.hasText(secret) || secret.contains(TEMPLATE_SECRET_MARKER)) {
+            throw new IllegalStateException(
+                    "authorization.jwt.secret sigue siendo el valor de plantilla. "
+                            + "Genera uno con 'openssl rand -base64 48' y pasalo por la variable "
+                            + "de entorno AUTHORIZATION_JWT_SECRET.");
+        }
+        int bytes = secret.getBytes(StandardCharsets.UTF_8).length;
+        if (bytes < MINIMUM_SECRET_BYTES) {
+            throw new IllegalStateException(
+                    "authorization.jwt.secret es demasiado corto: " + bytes
+                            + " bytes, y HS256 exige al menos " + MINIMUM_SECRET_BYTES + ".");
+        }
+    }
 
     /**
      * This method generates a JWT token from an authentication object

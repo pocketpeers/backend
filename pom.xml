@@ -232,4 +232,44 @@
         </pluginRepository>
     </pluginRepositories>
 
+
+	<profiles>
+		<!--
+			Perfil de empaquetado para desplegar: produce un jar sin credenciales.
+
+			Sin el, `mvn package` mete en el artefacto todo lo que hay en
+			src/main/resources, y ahi viven application.properties con cuatro
+			secretos reales, application-dev.properties con los datos de la base
+			local y firebase-credentials.json, que es una clave privada de cuenta
+			de servicio. El .gitignore los mantiene fuera del repositorio, pero no
+			tiene ninguna influencia sobre lo que Maven empaqueta.
+
+			Hay una segunda razon, menos obvia y mas peligrosa. El perfil prod solo
+			redefine las claves que nombra; las que no —la llave de Solana, las de
+			Twilio— caerian a los valores de application.properties si el archivo
+			viajara dentro. Olvidar una variable de entorno en el servidor no daria
+			ningun error: la aplicacion arrancaria usando en produccion las
+			credenciales de desarrollo, en silencio. Dejando el archivo fuera, ese
+			olvido falla de inmediato y a la vista.
+
+			Uso:  ./mvnw -Pprod clean package -DskipTests
+		-->
+		<profile>
+			<id>prod</id>
+			<build>
+				<resources>
+					<resource>
+						<directory>src/main/resources</directory>
+						<excludes>
+							<exclude>application.properties</exclude>
+							<exclude>application.properties.example</exclude>
+							<exclude>application-dev.properties</exclude>
+							<exclude>firebase-credentials.json</exclude>
+						</excludes>
+					</resource>
+				</resources>
+			</build>
+		</profile>
+	</profiles>
+
 </project>

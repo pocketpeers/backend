@@ -147,7 +147,7 @@ class GroupStatsProviderImplTests {
         when(reputationEventRepository.findAllByCounterpartyIdIsNotNullAndAmountIsNotNull())
                 .thenReturn(events);
         return new GroupStatsProviderImpl(reputationEventRepository,
-                new PeerScoreProperties(true, "v1", 0.5, 600));
+                new PeerScoreProperties(true, "v1", 0.5, 600, 0));
     }
 
     /** Lotes de eventos por tipo, para pasar el piso de confiabilidad global. */

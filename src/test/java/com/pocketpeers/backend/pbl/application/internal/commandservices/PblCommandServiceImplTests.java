@@ -157,7 +157,7 @@ class PblCommandServiceImplTests {
     private PblCommandServiceImpl service(boolean peerScoreEnabled) {
         return new PblCommandServiceImpl(userRepository, userReputationRepository, reputationEventRepository,
                 badgeCatalogRepository, userBadgeRepository, peerScoreService,
-                new PeerScoreProperties(peerScoreEnabled, "v1", 0.5, 600));
+                new PeerScoreProperties(peerScoreEnabled, "v1", 0.5, 600, 0));
     }
 
     private RegisterReputationEventCommand badgeOnlyEvent() {
