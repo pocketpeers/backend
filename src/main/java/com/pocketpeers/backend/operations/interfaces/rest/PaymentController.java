@@ -8,7 +8,7 @@ import com.pocketpeers.backend.operations.domain.model.queries.*;
 import com.pocketpeers.backend.operations.domain.model.valueobjects.PaymentStatus;
 import com.pocketpeers.backend.operations.domain.services.PaymentCommandService;
 import com.pocketpeers.backend.operations.domain.services.PaymentQueryService;
-import com.pocketpeers.backend.operations.infrastructure.persistence.jpa.repositories.ContractTransactionRepository;
+import com.pocketpeers.backend.operations.infrastructure.persistence.jpa.repositories.ExpenseChainRecordRepository;
 import com.pocketpeers.backend.operations.interfaces.rest.resources.MakePaymentResource;
 import com.pocketpeers.backend.operations.interfaces.rest.resources.CreatePaymentResource;
 import com.pocketpeers.backend.operations.interfaces.rest.resources.PaymentResource;
@@ -36,16 +36,16 @@ public class PaymentController {
     private final PaymentCommandService paymentCommandService;
     private final UserRepository userRepository;
     private final GroupMemberRepository groupMemberRepository;
-    private final ContractTransactionRepository contractTransactionRepository;
+    private final ExpenseChainRecordRepository expenseChainRecordRepository;
 
     public PaymentController(PaymentQueryService paymentQueryService, PaymentCommandService paymentCommandService,
                              UserRepository userRepository, GroupMemberRepository groupMemberRepository,
-                             ContractTransactionRepository contractTransactionRepository) {
+                             ExpenseChainRecordRepository expenseChainRecordRepository) {
         this.paymentQueryService = paymentQueryService;
         this.paymentCommandService = paymentCommandService;
         this.userRepository = userRepository;
         this.groupMemberRepository = groupMemberRepository;
-        this.contractTransactionRepository = contractTransactionRepository;
+        this.expenseChainRecordRepository = expenseChainRecordRepository;
     }
 
     @PostMapping
@@ -164,9 +164,9 @@ public class PaymentController {
     }
 
     private String paymentBlockchainHash(Long paymentId) {
-        return contractTransactionRepository
-                .findFirstByPayment_IdOrderByCreatedAtDesc(paymentId)
-                .map(transaction -> transaction.getTransactionHash().hash())
+        return expenseChainRecordRepository
+                .findFirstByPayment_IdOrderByRecordIndexDesc(paymentId)
+                .map(record -> record.getTransactionHash().hash())
                 .orElse("");
     }
 }

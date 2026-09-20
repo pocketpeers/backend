@@ -13,7 +13,7 @@ import com.pocketpeers.backend.operations.domain.services.ExpenseCommandService;
 import com.pocketpeers.backend.operations.domain.services.ExpenseQueryService;
 import com.pocketpeers.backend.operations.domain.services.PaymentCommandService;
 import com.pocketpeers.backend.operations.domain.services.PaymentQueryService;
-import com.pocketpeers.backend.operations.infrastructure.persistence.jpa.repositories.ContractTransactionRepository;
+import com.pocketpeers.backend.operations.infrastructure.persistence.jpa.repositories.ExpenseChainRecordRepository;
 import com.pocketpeers.backend.operations.interfaces.rest.resources.BlockchainStatusResource;
 import com.pocketpeers.backend.operations.interfaces.rest.resources.CreateExpenseResource;
 import com.pocketpeers.backend.operations.interfaces.rest.resources.CreateExpenseWithPaymentsResource;
@@ -50,18 +50,18 @@ public class ExpensesController {
     private final PaymentCommandService paymentCommandService;
     private final PaymentQueryService paymentQueryService;
     private final UserRepository userRepository;
-    private final ContractTransactionRepository contractTransactionRepository;
+    private final ExpenseChainRecordRepository expenseChainRecordRepository;
 
     public ExpensesController(ExpenseQueryService expenseQueryService, ExpenseCommandService expenseCommandService,
                               PaymentCommandService paymentCommandService, PaymentQueryService paymentQueryService,
                               UserRepository userRepository,
-                              ContractTransactionRepository contractTransactionRepository) {
+                              ExpenseChainRecordRepository expenseChainRecordRepository) {
         this.expenseQueryService = expenseQueryService;
         this.expenseCommandService = expenseCommandService;
         this.paymentCommandService = paymentCommandService;
         this.paymentQueryService = paymentQueryService;
         this.userRepository = userRepository;
-        this.contractTransactionRepository = contractTransactionRepository;
+        this.expenseChainRecordRepository = expenseChainRecordRepository;
     }
 
     @PostMapping
@@ -190,8 +190,8 @@ public class ExpensesController {
     @GetMapping("/groupId/{groupId}/blockchain-status")
     public ResponseEntity<BlockchainStatusResource> getBlockchainStatus(@PathVariable Long groupId) {
         return ResponseEntity.ok(BlockchainStatusResource.of(
-                contractTransactionRepository.countExpensesWithoutHash(groupId),
-                contractTransactionRepository.countPaymentsWithoutHash(groupId)));
+                expenseChainRecordRepository.countExpensesWithoutHash(groupId),
+                expenseChainRecordRepository.countPaymentsWithoutHash(groupId)));
     }
 
     @GetMapping("/groupId/{groupId}")
@@ -225,16 +225,16 @@ public class ExpensesController {
     }
 
     private String expenseBlockchainHash(Long expenseId) {
-        return contractTransactionRepository
-                .findFirstByContract_Expense_IdAndPaymentIsNullOrderByCreatedAtDesc(expenseId)
-                .map(transaction -> transaction.getTransactionHash().hash())
+        return expenseChainRecordRepository
+                .findFirstByChain_Expense_IdAndPaymentIsNullOrderByCreatedAtDesc(expenseId)
+                .map(record -> record.getTransactionHash().hash())
                 .orElse("");
     }
 
     private String paymentBlockchainHash(Long paymentId) {
-        return contractTransactionRepository
-                .findFirstByPayment_IdOrderByCreatedAtDesc(paymentId)
-                .map(transaction -> transaction.getTransactionHash().hash())
+        return expenseChainRecordRepository
+                .findFirstByPayment_IdOrderByRecordIndexDesc(paymentId)
+                .map(record -> record.getTransactionHash().hash())
                 .orElse("");
     }
 

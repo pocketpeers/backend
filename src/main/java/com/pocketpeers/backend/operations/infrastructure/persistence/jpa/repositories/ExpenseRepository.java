@@ -34,7 +34,7 @@ public interface ExpenseRepository extends JpaRepository<Expense, Long> {
     @Query("""
     SELECT e FROM Expense e
     WHERE (e.active IS NULL OR e.active = 1)
-      AND NOT EXISTS (SELECT 1 FROM ExpenseContract c WHERE c.expense = e)
+      AND NOT EXISTS (SELECT 1 FROM ExpenseChain c WHERE c.expense = e)
     ORDER BY e.id
 """)
     List<Expense> findActiveWithoutContract();

@@ -2,16 +2,17 @@ package com.pocketpeers.backend.operations.infrastructure.blockchain.solana.adap
 
 import com.pocketpeers.backend.operations.domain.model.aggregates.Expense;
 import com.pocketpeers.backend.operations.domain.model.aggregates.Payment;
-import com.pocketpeers.backend.operations.domain.model.entities.ContractTransaction;
-import com.pocketpeers.backend.operations.domain.model.entities.ExpenseContract;
+import com.pocketpeers.backend.operations.domain.model.entities.ExpenseChain;
+import com.pocketpeers.backend.operations.domain.model.entities.ExpenseChainRecord;
 import com.pocketpeers.backend.operations.domain.model.valueobjects.ContractAddress;
 import com.pocketpeers.backend.operations.domain.model.valueobjects.PaymentStatus;
 import com.pocketpeers.backend.operations.domain.model.valueobjects.TransactionHash;
 import com.pocketpeers.backend.operations.domain.exceptions.PermanentContractSyncException;
 import com.pocketpeers.backend.operations.domain.ports.out.ExpenseSmartContractPort;
 import com.pocketpeers.backend.operations.infrastructure.blockchain.solana.services.SolanaClient;
-import com.pocketpeers.backend.operations.infrastructure.persistence.jpa.repositories.ContractTransactionRepository;
-import com.pocketpeers.backend.operations.infrastructure.persistence.jpa.repositories.ExpenseContractRepository;
+import com.pocketpeers.backend.operations.infrastructure.persistence.jpa.repositories.ExpenseChainRecordRepository;
+import com.pocketpeers.backend.operations.infrastructure.persistence.jpa.repositories.ExpenseChainRepository;
+import com.pocketpeers.backend.operations.infrastructure.persistence.jpa.repositories.PaymentRepository;
 import jakarta.transaction.Transactional;
 import lombok.RequiredArgsConstructor;
 import org.p2p.solanaj.core.AccountMeta;
@@ -33,24 +34,30 @@ import java.time.Duration;
 import java.time.LocalTime;
 import java.time.ZoneId;
 import java.util.ArrayList;
+import java.util.Base64;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 
 @Service
 @RequiredArgsConstructor
 public class ExpenseSmartContractAdapter implements ExpenseSmartContractPort {
-    // Seeds used to derive stable Program Derived Addresses (PDA) for each
-    // expense and payment. Keeping these values unchanged is important because
-    // the same seeds must be used by the on-chain Solana program.
-    private static final byte[] EXPENSE_SEED = "expense".getBytes(StandardCharsets.UTF_8);
-    private static final byte[] PAYMENT_SEED = "payment".getBytes(StandardCharsets.UTF_8);
+    // Semilla del PDA del gasto. Cambio junto con el layout de la cuenta: una
+    // cuenta escrita con el formato viejo no se puede deserializar con el nuevo,
+    // asi que los gastos anteriores se quedan donde estan, intactos y legibles
+    // con el formato de entonces, y este programa no los toca.
+    //
+    // Ya no hay semilla de pago: los pagos no crean cuentas.
+    private static final byte[] EXPENSE_SEED = "expense_v2".getBytes(StandardCharsets.UTF_8);
+    private static final int MAX_EXPENSE_NAME_BYTES = 64;
     private static final Duration SIGNATURE_STATUS_TIMEOUT = Duration.ofSeconds(90);
     private static final long SIGNATURE_STATUS_POLL_MILLIS = 1_500;
     private static final ZoneId LIMA_ZONE = ZoneId.of("America/Lima");
 
     private final SolanaClient solanaClient;
-    private final ExpenseContractRepository expenseContractRepository;
-    private final ContractTransactionRepository contractTransactionRepository;
+    private final ExpenseChainRepository expenseChainRepository;
+    private final ExpenseChainRecordRepository expenseChainRecordRepository;
+    private final PaymentRepository paymentRepository;
 
     @Value("${solana.program.id}")
     private String programId;
@@ -86,7 +93,7 @@ public class ExpenseSmartContractAdapter implements ExpenseSmartContractPort {
         // The expense contract is created once per expense. If this method is
         // retried after a successful deploy, the local database prevents
         // creating a duplicated on-chain account for the same business expense.
-        expenseContractRepository.findByExpense(expense)
+        expenseChainRepository.findByExpense(expense)
                 .ifPresent(existingContract -> {
                     throw new IllegalArgumentException("Expense contract already exists for the given expense");
                 });
@@ -100,8 +107,12 @@ public class ExpenseSmartContractAdapter implements ExpenseSmartContractPort {
         // no haya registro, y enviar la creacion costaria una comision para
         // terminar rechazada.
         if (accountExistsOnChain(expensePda)) {
-            return reconcileExistingExpenseContract(expense, expensePda);
+            return reconcileExistingExpenseChain(expense, expensePda);
         }
+
+        String onChainName = truncateToMaxBytes(expense.getName());
+        long dueDateUnix = dueDateUnix(expense);
+        long amountMinorUnits = toMinorUnits(expense.getAmount());
 
         String signature;
         try {
@@ -110,7 +121,8 @@ public class ExpenseSmartContractAdapter implements ExpenseSmartContractPort {
             // here so the domain layer only depends on ExpenseSmartContractPort.
             String latestBlockhash = latestBlockhash();
             Transaction transaction = new Transaction();
-            transaction.addInstruction(createExpenseInstruction(programPublicKey, authority, expensePda, expense));
+            transaction.addInstruction(createExpenseInstruction(
+                    programPublicKey, authority, expensePda, expense, onChainName, amountMinorUnits, dueDateUnix));
             transaction.setRecentBlockHash(latestBlockhash);
 
             signature = sendTransaction(transaction, latestBlockhash);
@@ -122,150 +134,238 @@ public class ExpenseSmartContractAdapter implements ExpenseSmartContractPort {
             if (isAlreadyInUse(exception)) {
                 // Carrera entre la comprobacion y el envio: alguien creo la cuenta
                 // en el intervalo. Se adopta la que ya existe en vez de reintentar.
-                return reconcileExistingExpenseContract(expense, expensePda);
+                return reconcileExistingExpenseChain(expense, expensePda);
             }
             throw new RuntimeException("Failed to create expense on Solana: " + exception.getMessage(), exception);
         }
 
-        ExpenseContract expenseContract = expenseContractRepository.save(new ExpenseContract(
-                new ContractAddress(expensePda.toBase58()),
-                expense
+        // El mismo hash que acaba de calcular el programa. Se reproduce aqui en
+        // vez de leerlo de la cadena porque el calculo es determinista y la
+        // transaccion ya esta confirmada: una lectura mas no diria nada nuevo.
+        String genesisHash = HexFormat.of().formatHex(genesisHash(
+                expense.getId(),
+                expense.getGroup().getId(),
+                expense.getUser().getId(),
+                amountMinorUnits,
+                dueDateUnix,
+                onChainName
         ));
 
-        ContractTransaction transaction = new ContractTransaction();
-        transaction.setContract(expenseContract);
+        ExpenseChain expenseChain = expenseChainRepository.save(new ExpenseChain(
+                new ContractAddress(expensePda.toBase58()),
+                expense,
+                genesisHash
+        ));
+
+        ExpenseChainRecord transaction = new ExpenseChainRecord();
+        transaction.setChain(expenseChain);
         transaction.setTransactionHash(new TransactionHash(signature));
-        contractTransactionRepository.save(transaction);
+        transaction.setChainHash(genesisHash);
+        transaction.setRecordIndex(0);
+        expenseChainRecordRepository.save(transaction);
 
         obtenerSaldoBackend();
 
-        return expenseContract.getContractAddress();
+        return expenseChain.getContractAddress();
     }
 
+    /**
+     * Añade un eslabon a la cadena del gasto con el estado actual de un pago.
+     *
+     * <p>Antes habia dos metodos, uno para registrar y otro para actualizar,
+     * porque cada pago tenia su propia cuenta en la cadena. Ya no la tiene, y
+     * con ella desaparecio la distincion: corregir un pago es escribir un
+     * movimiento mas, igual que registrarlo por primera vez.</p>
+     *
+     * <p>Eso obliga a resolver la idempotencia de otra forma. Antes bastaba
+     * preguntar si la cuenta del pago existia; ahora no hay cuenta que
+     * preguntar, y reenviar un movimiento que ya entro añadiria un eslabon
+     * duplicado que corromperia la cadena en silencio. La comprobacion es
+     * comparar el {@code chain_hash} de la cadena con el que este backend cree
+     * que deberia haber: si coinciden, vamos al dia; si el de la cadena es el
+     * eslabon que ibamos a escribir, la transaccion si entro y lo que se perdio
+     * fue el registro local.</p>
+     */
     @Override
     @Transactional
-    public TransactionHash addPaymentToExpenseContract(Expense expense, Payment payment) throws Exception {
-        // Payment registration is idempotent from the backend perspective:
-        // once a payment has a transaction hash, callers can safely retry and
-        // receive the already persisted hash instead of sending a new tx.
-        var existingPaymentTransaction = contractTransactionRepository.findFirstByPayment_IdOrderByCreatedAtDesc(payment.getId());
-        if (existingPaymentTransaction.isPresent()) {
-            return existingPaymentTransaction.get().getTransactionHash();
-        }
-
-        ExpenseContract expenseContractEntity = expenseContractRepository.findByExpense(expense)
+    public TransactionHash recordPayment(Expense expense, Payment payment) throws Exception {
+        ExpenseChain expenseChainEntity = expenseChainRepository.findByExpense(expense)
                 .orElseThrow(() -> new RuntimeException("Expense contract not found for the given expense"));
 
         PublicKey programPublicKey = new PublicKey(programId);
         PublicKey authority = solanaClient.getSignerAccount().getPublicKey();
-        PublicKey expensePda = new PublicKey(expenseContractEntity.getContractAddress().address());
-        PublicKey paymentPda = paymentPda(expensePda, payment.getId(), programPublicKey);
+        PublicKey expensePda = new PublicKey(expenseChainEntity.getContractAddress().address());
 
-        // Mismo caso que en el gasto: la PDA del pago puede existir en la red sin
-        // que esta base tenga el registro.
-        if (accountExistsOnChain(paymentPda)) {
-            return reconcileExistingPaymentTransaction(expenseContractEntity, payment, paymentPda);
+        // Actualizar una cuenta que no existe falla siempre. Antes se enviaba
+        // igual y se pagaba la comision en cada intento; ahora se comprueba con
+        // una lectura gratuita y se corta sin reintentar.
+        ExpenseAccountState onChain = readExpenseAccount(expensePda);
+        if (onChain == null) {
+            throw new PermanentContractSyncException(
+                    "Expense account does not exist on-chain, nothing to record. expenseId="
+                            + expense.getId() + ", pda=" + expensePda.toBase58());
+        }
+        if (!onChain.active()) {
+            throw new PermanentContractSyncException(
+                    "Expense is cancelled on-chain, it no longer accepts payments. expenseId=" + expense.getId());
+        }
+
+        // El programa guarda el total pagado del gasto entero, no el de cada
+        // pago, asi que hay que sumarlo aqui. Se consulta a la base en vez de
+        // recorrer expense.getPayments() porque este metodo corre en un
+        // manejador asincrono y esa coleccion puede venir de una entidad ya
+        // separada de la sesion, con importes viejos.
+        long expensePaidMinorUnits = totalPaidMinorUnits(expense.getId());
+        long paymentPaidMinorUnits = toMinorUnits(payment.getAmountPaid());
+        PaymentStatus status = PaymentStatus.valueOf(payment.getStatus());
+        boolean confirmed = Boolean.TRUE.equals(payment.getConfirmed());
+
+        byte[] lineHash = paymentLineHash(
+                payment.getId(),
+                payment.getUser().getId(),
+                paymentPaidMinorUnits,
+                expensePaidMinorUnits,
+                statusByte(status),
+                confirmed
+        );
+
+        String expectedPrevious = expenseChainEntity.getLastChainHash() != null
+                ? expenseChainEntity.getLastChainHash()
+                : expenseChainEntity.getGenesisHash();
+        String onChainHash = HexFormat.of().formatHex(onChain.chainHash());
+        String nextHash = HexFormat.of().formatHex(link(onChain.chainHash(), lineHash));
+
+        // El caso de recuperacion: la transaccion anterior entro en la cadena
+        // pero su fila no llego a guardarse. Se detecta porque la cadena esta
+        // exactamente un eslabon por delante de lo que tenemos anotado, y ese
+        // eslabon es el de este mismo movimiento.
+        var alreadyRecorded = expenseChainRecordRepository
+                .findFirstByPayment_IdAndPaymentLineHash(payment.getId(), HexFormat.of().formatHex(lineHash));
+        if (alreadyRecorded.isPresent() && onChainHash.equals(alreadyRecorded.get().getChainHash())) {
+            return alreadyRecorded.get().getTransactionHash();
+        }
+        if (expectedPrevious != null && !onChainHash.equals(expectedPrevious)) {
+            TransactionHash recovered = recoverLostRecord(
+                    expenseChainEntity, payment, expensePda, onChain, onChainHash, lineHash, expectedPrevious);
+            if (recovered != null) {
+                return recovered;
+            }
+        }
+
+        // El programa rechaza que el total pagado retroceda. Detectarlo aqui
+        // con una lectura gratuita evita pagar la comision de una transaccion
+        // que la cadena va a rechazar igual.
+        if (expensePaidMinorUnits < onChain.paidMinorUnits()) {
+            throw new PermanentContractSyncException(
+                    "Local paid total is behind the chain, refusing to write. expenseId=" + expense.getId()
+                            + ", local=" + expensePaidMinorUnits + ", onChain=" + onChain.paidMinorUnits());
+        }
+        if (expensePaidMinorUnits > toMinorUnits(expense.getAmount())) {
+            throw new PermanentContractSyncException(
+                    "Paid total exceeds the expense amount, refusing to write. expenseId=" + expense.getId());
         }
 
         String signature;
         try {
             String latestBlockhash = latestBlockhash();
             Transaction transaction = new Transaction();
-            transaction.addInstruction(registerPaymentInstruction(
+            transaction.addInstruction(recordPaymentInstruction(
                     programPublicKey,
                     authority,
                     expensePda,
-                    paymentPda,
-                    payment
+                    payment,
+                    paymentPaidMinorUnits,
+                    expensePaidMinorUnits,
+                    status,
+                    confirmed
             ));
             transaction.setRecentBlockHash(latestBlockhash);
 
             signature = sendTransaction(transaction, latestBlockhash);
-            System.out.println("Payment account created on Solana. pda=" + paymentPda.toBase58()
-                    + ", signature=" + signature);
+            System.out.println("Payment recorded on Solana. pda=" + expensePda.toBase58()
+                    + ", paymentId=" + payment.getId() + ", signature=" + signature);
             waitForSuccessfulSignature(signature);
         } catch (Exception exception) {
-            System.out.println("Failed to register payment on Solana: " + exception.getMessage());
-            if (isAlreadyInUse(exception)) {
-                return reconcileExistingPaymentTransaction(expenseContractEntity, payment, paymentPda);
-            }
-            throw new RuntimeException("Failed to register payment on Solana: " + exception.getMessage(), exception);
+            throw new RuntimeException("Failed to record payment on Solana: " + exception.getMessage(), exception);
         }
 
         TransactionHash transactionHash = new TransactionHash(signature);
-
-        ContractTransaction transaction = new ContractTransaction();
-        transaction.setContract(expenseContractEntity);
-        transaction.setPayment(payment);
-        transaction.setTransactionHash(transactionHash);
-        transaction.setPaymentAddress(paymentPda.toBase58());
-        contractTransactionRepository.save(transaction);
+        persistRecord(expenseChainEntity, payment, transactionHash, lineHash, nextHash,
+                onChain.recordsCount() + 1);
 
         obtenerSaldoBackend();
 
         return transactionHash;
     }
 
-    @Override
-    @Transactional
-    public TransactionHash updatePaymentStatus(Payment payment, PaymentStatus status) throws Exception {
-        ExpenseContract expenseContractEntity = expenseContractRepository.findByExpense(payment.getExpense())
-                .orElseThrow(() -> new Exception("Expense contract not found for the given payment"));
-
-        PublicKey programPublicKey = new PublicKey(programId);
-        PublicKey authority = solanaClient.getSignerAccount().getPublicKey();
-        PublicKey expensePda = new PublicKey(expenseContractEntity.getContractAddress().address());
-        PublicKey paymentPda = paymentPda(expensePda, payment.getId(), programPublicKey);
-
-        // Actualizar una cuenta que no existe falla siempre. Antes se enviaba
-        // igual y se pagaba la comision en cada intento; ahora se comprueba con
-        // una lectura gratuita y se corta sin reintentar.
-        if (!accountExistsOnChain(paymentPda)) {
+    /**
+     * Adopta un movimiento que entro en la cadena pero cuya fila se perdio.
+     *
+     * <p>Solo se acepta si el {@code chain_hash} de la cadena es exactamente el
+     * eslabon que resulta de aplicar este movimiento sobre lo ultimo que
+     * teniamos anotado. Cualquier otra diferencia significa que la cadena y la
+     * base divergieron por un motivo que no sabemos, y escribir encima a ciegas
+     * empeoraria las cosas.</p>
+     */
+    private TransactionHash recoverLostRecord(ExpenseChain expenseChain,
+                                              Payment payment,
+                                              PublicKey expensePda,
+                                              ExpenseAccountState onChain,
+                                              String onChainHash,
+                                              byte[] lineHash,
+                                              String expectedPrevious) {
+        byte[] previousBytes = HexFormat.of().parseHex(expectedPrevious);
+        String wouldBe = HexFormat.of().formatHex(link(previousBytes, lineHash));
+        if (!onChainHash.equals(wouldBe)) {
             throw new PermanentContractSyncException(
-                    "Payment account does not exist on-chain, nothing to update. paymentId="
-                            + payment.getId() + ", pda=" + paymentPda.toBase58());
+                    "Chain and database diverged, manual reconciliation needed. expenseId="
+                            + expenseChain.getExpense().getId()
+                            + ", onChain=" + onChainHash + ", expected=" + expectedPrevious);
         }
 
-        String signature;
-        try {
-            String latestBlockhash = latestBlockhash();
-            Transaction transaction = new Transaction();
-            transaction.addInstruction(updatePaymentInstruction(
-                    programPublicKey,
-                    authority,
-                    expensePda,
-                    paymentPda,
-                    payment
-            ));
-            transaction.setRecentBlockHash(latestBlockhash);
+        System.out.println("Payment was already recorded on-chain, adopting it instead of writing again. paymentId="
+                + payment.getId());
 
-            signature = sendTransaction(transaction, latestBlockhash);
-            System.out.println("Payment updated on Solana. pda=" + paymentPda.toBase58()
-                    + ", signature=" + signature);
-            waitForSuccessfulSignature(signature);
-        } catch (Exception exception) {
-            throw new RuntimeException("Failed to update payment status on Solana: " + exception.getMessage(), exception);
+        TransactionHash signature = latestSignatureFor(expensePda);
+        if (signature == null) {
+            throw new PermanentContractSyncException(
+                    "Payment already recorded on-chain but its signature could not be recovered. paymentId="
+                            + payment.getId());
         }
+        persistRecord(expenseChain, payment, signature, lineHash, onChainHash, onChain.recordsCount());
+        return signature;
+    }
 
-        TransactionHash transactionHash = new TransactionHash(signature);
+    private void persistRecord(ExpenseChain expenseChain,
+                               Payment payment,
+                               TransactionHash transactionHash,
+                               byte[] lineHash,
+                               String chainHash,
+                               int recordIndex) {
+        ExpenseChainRecord chainRecord = new ExpenseChainRecord();
+        chainRecord.setChain(expenseChain);
+        chainRecord.setPayment(payment);
+        chainRecord.setTransactionHash(transactionHash);
+        chainRecord.setPaymentLineHash(HexFormat.of().formatHex(lineHash));
+        chainRecord.setChainHash(chainHash);
+        chainRecord.setRecordIndex(recordIndex);
+        expenseChainRecordRepository.save(chainRecord);
 
-        ContractTransaction contractTransaction = new ContractTransaction();
-        contractTransaction.setContract(expenseContractEntity);
-        contractTransaction.setPayment(payment);
-        contractTransaction.setTransactionHash(transactionHash);
-        contractTransaction.setPaymentAddress(paymentPda.toBase58());
-        contractTransactionRepository.save(contractTransaction);
-
-        obtenerSaldoBackend();
-
-        return transactionHash;
+        // El avance de la cadena se anota solo despues de confirmar. Guardarlo
+        // antes dejaria la base por delante y nada volveria a cuadrar.
+        expenseChain.setLastChainHash(chainHash);
+        expenseChain.setRecordsCount(recordIndex);
+        expenseChainRepository.save(expenseChain);
     }
 
     private TransactionInstruction createExpenseInstruction(
             PublicKey programPublicKey,
             PublicKey authority,
             PublicKey expensePda,
-            Expense expense
+            Expense expense,
+            String onChainName,
+            long amountMinorUnits,
+            long dueDateUnix
     ) throws Exception {
         // Anchor expects the first 8 bytes to be the instruction discriminator,
         // followed by the serialized arguments in little-endian order.
@@ -273,8 +373,9 @@ public class ExpenseSmartContractAdapter implements ExpenseSmartContractPort {
                 .u64(expense.getId())
                 .u64(expense.getGroup().getId())
                 .u64(expense.getUser().getId())
-                .u64(toMinorUnits(expense.getAmount()))
-                .i64(expense.getDueDate().atTime(LocalTime.MIDNIGHT).atZone(LIMA_ZONE).toEpochSecond())
+                .u64(amountMinorUnits)
+                .i64(dueDateUnix)
+                .string(onChainName)
                 .toByteArray();
 
         return new TransactionInstruction(
@@ -288,49 +389,34 @@ public class ExpenseSmartContractAdapter implements ExpenseSmartContractPort {
         );
     }
 
-    private TransactionInstruction registerPaymentInstruction(
+    /**
+     * Sin cuenta de pago y sin {@code system_program}: esta instruccion no crea
+     * nada, solo modifica la cuenta del gasto. Por eso cuesta la comision y
+     * nada mas.
+     */
+    private TransactionInstruction recordPaymentInstruction(
             PublicKey programPublicKey,
             PublicKey authority,
             PublicKey expensePda,
-            PublicKey paymentPda,
-            Payment payment
+            Payment payment,
+            long paymentPaidMinorUnits,
+            long expensePaidMinorUnits,
+            PaymentStatus status,
+            boolean confirmed
     ) throws Exception {
-        var data = new AnchorData("register_payment")
+        var data = new AnchorData("record_payment")
                 .u64(payment.getId())
                 .u64(payment.getUser().getId())
-                .u64(toMinorUnits(payment.getAmount()))
-                .u64(toMinorUnits(payment.getAmountPaid()))
+                .u64(paymentPaidMinorUnits)
+                .u64(expensePaidMinorUnits)
+                .u8(statusByte(status))
+                .bool(confirmed)
                 .toByteArray();
 
         return new TransactionInstruction(
                 programPublicKey,
                 List.of(
                         new AccountMeta(expensePda, false, true),
-                        new AccountMeta(paymentPda, false, true),
-                        new AccountMeta(authority, true, true),
-                        new AccountMeta(SystemProgram.PROGRAM_ID, false, false)
-                ),
-                data
-        );
-    }
-
-    private TransactionInstruction updatePaymentInstruction(
-            PublicKey programPublicKey,
-            PublicKey authority,
-            PublicKey expensePda,
-            PublicKey paymentPda,
-            Payment payment
-    ) throws Exception {
-        var data = new AnchorData("update_payment")
-                .u64(toMinorUnits(payment.getAmountPaid()))
-                .bool(payment.getConfirmed())
-                .toByteArray();
-
-        return new TransactionInstruction(
-                programPublicKey,
-                List.of(
-                        new AccountMeta(expensePda, false, true),
-                        new AccountMeta(paymentPda, false, true),
                         new AccountMeta(authority, true, false)
                 ),
                 data
@@ -351,50 +437,42 @@ public class ExpenseSmartContractAdapter implements ExpenseSmartContractPort {
      * <p>Registra en la base local la PDA y, si se puede, la firma con la que se
      * creo. Eso cierra el hueco de no tener rastro local de transacciones
      * enviadas en ejecuciones anteriores.</p>
+     *
+     * <p>El estado del encadenado se toma de la cuenta, no se recalcula: si el
+     * gasto ya recibio pagos, el {@code chain_hash} de la cadena es el bueno y
+     * el hash de creacion por si solo se habria quedado corto.</p>
      */
-    private ContractAddress reconcileExistingExpenseContract(Expense expense, PublicKey expensePda) {
+    private ContractAddress reconcileExistingExpenseChain(Expense expense, PublicKey expensePda) {
         System.out.println("Expense account already exists on Solana, adopting it instead of creating. pda="
                 + expensePda.toBase58());
 
-        ExpenseContract expenseContract = expenseContractRepository.save(new ExpenseContract(
+        ExpenseChain expenseChain = new ExpenseChain(
                 new ContractAddress(expensePda.toBase58()),
                 expense
-        ));
+        );
+
+        ExpenseAccountState onChain = readExpenseAccount(expensePda);
+        if (onChain != null) {
+            String chainHash = HexFormat.of().formatHex(onChain.chainHash());
+            expenseChain.setLastChainHash(chainHash);
+            expenseChain.setRecordsCount(onChain.recordsCount());
+            if (onChain.recordsCount() == 0) {
+                // Sin movimientos todavia, el encadenado sigue siendo el de creacion.
+                expenseChain.setGenesisHash(chainHash);
+            }
+        }
+        expenseChain = expenseChainRepository.save(expenseChain);
 
         TransactionHash creationSignature = creationSignatureFor(expensePda);
         if (creationSignature != null) {
-            ContractTransaction contractTransaction = new ContractTransaction();
-            contractTransaction.setContract(expenseContract);
-            contractTransaction.setTransactionHash(creationSignature);
-            contractTransactionRepository.save(contractTransaction);
+            ExpenseChainRecord chainRecord = new ExpenseChainRecord();
+            chainRecord.setChain(expenseChain);
+            chainRecord.setTransactionHash(creationSignature);
+            chainRecord.setChainHash(expenseChain.getGenesisHash());
+            chainRecord.setRecordIndex(0);
+            expenseChainRecordRepository.save(chainRecord);
         }
-        return expenseContract.getContractAddress();
-    }
-
-    /**
-     * Adopta un pago que ya existe en la cadena, recuperando su firma de creacion.
-     */
-    private TransactionHash reconcileExistingPaymentTransaction(ExpenseContract expenseContract,
-                                                                Payment payment,
-                                                                PublicKey paymentPda) {
-        System.out.println("Payment account already exists on Solana, adopting it instead of creating. pda="
-                + paymentPda.toBase58());
-
-        TransactionHash creationSignature = creationSignatureFor(paymentPda);
-        if (creationSignature == null) {
-            throw new PermanentContractSyncException(
-                    "Payment account already exists on-chain but its signature could not be recovered. pda="
-                            + paymentPda.toBase58());
-        }
-
-        ContractTransaction contractTransaction = new ContractTransaction();
-        contractTransaction.setContract(expenseContract);
-        contractTransaction.setPayment(payment);
-        contractTransaction.setTransactionHash(creationSignature);
-        contractTransaction.setPaymentAddress(paymentPda.toBase58());
-        contractTransactionRepository.save(contractTransaction);
-
-        return creationSignature;
+        return expenseChain.getContractAddress();
     }
 
     /**
@@ -413,7 +491,7 @@ public class ExpenseSmartContractAdapter implements ExpenseSmartContractPort {
         try {
             Map<String, Object> result = solanaClient.getRpcClient().call(
                     "getAccountInfo",
-                    List.of(account.toBase58(), Map.of("encoding", "base64")),
+                    List.of(account.toBase58(), accountInfoConfig()),
                     Map.class
             );
             return result != null && result.get("value") != null;
@@ -428,32 +506,139 @@ public class ExpenseSmartContractAdapter implements ExpenseSmartContractPort {
     }
 
     /**
+     * Lee y deserializa la cuenta del gasto.
+     *
+     * <p>El layout lo fija el programa: 8 bytes de discriminador de Anchor y
+     * despues los campos en el orden en que estan declarados. El nombre es una
+     * cadena Borsh —4 bytes de longitud y luego los bytes—, asi que todo lo que
+     * viene detras esta desplazado por esa longitud y hay que leerla antes.</p>
+     *
+     * <p>Devuelve {@code null} solo cuando la cadena responde y dice que la
+     * cuenta no esta. Si la lectura falla —un 429, un corte de red— lanza una
+     * excepcion normal para que el manejador reintente.</p>
+     *
+     * <p>La distincion importa mas de lo que parece. Antes las dos cosas
+     * devolvian {@code null} y quien llamaba las trataba igual: como cuenta
+     * inexistente, que es una falla permanente y no se reintenta. Con eso, un
+     * limite de peticiones pasajero dejaba el pago sin anclar para siempre.</p>
+     */
+    @SuppressWarnings("unchecked")
+    private ExpenseAccountState readExpenseAccount(PublicKey account) {
+        Map<String, Object> result;
+        try {
+            result = solanaClient.getRpcClient().call(
+                    "getAccountInfo",
+                    List.of(account.toBase58(), accountInfoConfig()),
+                    Map.class
+            );
+        } catch (Exception exception) {
+            throw new RuntimeException("Could not read expense account on-chain. account="
+                    + account.toBase58() + ", message=" + exception.getMessage(), exception);
+        }
+
+        if (result == null || result.get("value") == null) {
+            return null;
+        }
+        Map<String, Object> value = (Map<String, Object>) result.get("value");
+        List<String> data = (List<String>) value.get("data");
+        if (data == null || data.isEmpty()) {
+            return null;
+        }
+
+        try {
+            byte[] raw = Base64.getDecoder().decode(data.get(0));
+
+            ByteBuffer buffer = ByteBuffer.wrap(raw).order(ByteOrder.LITTLE_ENDIAN);
+            buffer.position(8 + 32 + 8 + 8 + 8 + 8 + 8); // discriminador, authority y los cinco enteros
+            int nameLength = buffer.getInt();
+            buffer.position(buffer.position() + nameLength);
+
+            boolean active = buffer.get() != 0;
+            boolean settled = buffer.get() != 0;
+            byte[] chainHash = new byte[32];
+            buffer.get(chainHash);
+            int recordsCount = buffer.getInt();
+            long paidMinorUnits = buffer.getLong();
+
+            return new ExpenseAccountState(active, settled, chainHash, recordsCount, paidMinorUnits);
+        } catch (Exception exception) {
+            // La cuenta existe pero no tiene la forma que espera este codigo.
+            // Reintentar no va a cambiar los bytes: o es una cuenta de otro
+            // programa, o el layout del contrato cambio sin actualizar esto.
+            throw new PermanentContractSyncException("Expense account has an unexpected layout. account="
+                    + account.toBase58() + ", message=" + exception.getMessage());
+        }
+    }
+
+    /**
+     * Configuracion de las lecturas de cuenta.
+     *
+     * <p>El {@code commitment} es lo importante. Sin el, {@code getAccountInfo}
+     * usa {@code finalized}, que va una decena de segundos por detras, mientras
+     * que el envio solo espera a {@code confirmed}. El resultado era que una
+     * cuenta recien creada se leia como inexistente durante ese hueco: el gasto
+     * se anclaba bien y sus pagos se abandonaban acto seguido porque, segun la
+     * lectura, el gasto no estaba. Leer al mismo nivel al que se espera cierra
+     * ese hueco.</p>
+     */
+    private static Map<String, String> accountInfoConfig() {
+        return Map.of("encoding", "base64", "commitment", "confirmed");
+    }
+
+    /**
      * Recupera la firma mas antigua asociada a una cuenta, que es la de su creacion.
      *
      * <p>Sirve para reconstruir en la base local el hash de una transaccion que se
      * envio en una ejecucion anterior. Tambien es una lectura sin costo.</p>
      */
     private TransactionHash creationSignatureFor(PublicKey account) {
+        List<?> signatures = signaturesFor(account);
+        if (signatures == null || signatures.isEmpty()) {
+            return null;
+        }
+        // El RPC devuelve de la mas reciente a la mas antigua; la creacion es la ultima.
+        return signatureAt(signatures, signatures.size() - 1);
+    }
+
+    /** La firma mas reciente de la cuenta: el ultimo movimiento que entro. */
+    private TransactionHash latestSignatureFor(PublicKey account) {
+        List<?> signatures = signaturesFor(account);
+        if (signatures == null || signatures.isEmpty()) {
+            return null;
+        }
+        return signatureAt(signatures, 0);
+    }
+
+    /**
+     * Firmas de una cuenta, de la mas reciente a la mas antigua.
+     *
+     * <p>El {@code commitment} tiene que ser {@code confirmed} por lo mismo que
+     * en las lecturas de cuenta: por defecto seria {@code finalized}, que va por
+     * detras. Al adoptar un movimiento recien escrito, la firma que se busca
+     * todavia no esta finalizada y la lista devolvia la anterior —normalmente la
+     * de la creacion del gasto— que se guardaba como si fuera la del pago. El
+     * hash que enseñaba la app apuntaba entonces a la transaccion equivocada.</p>
+     */
+    private List<?> signaturesFor(PublicKey account) {
         try {
-            List<?> signatures = solanaClient.getRpcClient().call(
+            return solanaClient.getRpcClient().call(
                     "getSignaturesForAddress",
-                    List.of(account.toBase58(), Map.of("limit", 1000)),
+                    List.of(account.toBase58(), Map.of("limit", 1000, "commitment", "confirmed")),
                     List.class
             );
-            if (signatures == null || signatures.isEmpty()) {
-                return null;
-            }
-            // El RPC devuelve de la mas reciente a la mas antigua; la creacion es la ultima.
-            Object oldest = signatures.get(signatures.size() - 1);
-            if (oldest instanceof Map<?, ?> entry && entry.get("signature") instanceof String signature) {
-                return new TransactionHash(signature);
-            }
-            return null;
         } catch (Exception exception) {
-            System.out.println("Could not recover creation signature. account=" + account.toBase58()
+            System.out.println("Could not recover signatures. account=" + account.toBase58()
                     + ", message=" + exception.getMessage());
             return null;
         }
+    }
+
+    private TransactionHash signatureAt(List<?> signatures, int index) {
+        Object entry = signatures.get(index);
+        if (entry instanceof Map<?, ?> map && map.get("signature") instanceof String signature) {
+            return new TransactionHash(signature);
+        }
+        return null;
     }
 
     /**
@@ -481,6 +666,7 @@ public class ExpenseSmartContractAdapter implements ExpenseSmartContractPort {
                 null,
                 Map.class
         );
+        @SuppressWarnings("unchecked")
         Map<String, Object> valueMap = (Map<String, Object>) blockhashResult.get("value");
         return (String) valueMap.get("blockhash");
     }
@@ -527,11 +713,44 @@ public class ExpenseSmartContractAdapter implements ExpenseSmartContractPort {
         ).getAddress();
     }
 
-    private PublicKey paymentPda(PublicKey expensePda, Long paymentId, PublicKey programPublicKey) {
-        return PublicKey.findProgramAddress(
-                List.of(PAYMENT_SEED, expensePda.toByteArray(), leU64(paymentId)),
-                programPublicKey
-        ).getAddress();
+    private long dueDateUnix(Expense expense) {
+        return expense.getDueDate().atTime(LocalTime.MIDNIGHT).atZone(LIMA_ZONE).toEpochSecond();
+    }
+
+    /**
+     * Suma lo pagado en todos los pagos del gasto.
+     *
+     * <p>El programa guarda el acumulado del gasto, no el de cada pago, porque
+     * es lo unico que necesita para saber si quedo liquidado sin que nadie le
+     * diga de antemano cuantos pagos va a haber.</p>
+     */
+    private long totalPaidMinorUnits(Long expenseId) {
+        BigDecimal total = paymentRepository.findAllByExpenseId(expenseId).stream()
+                .map(Payment::getAmountPaid)
+                .filter(amount -> amount != null)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        return toMinorUnits(total);
+    }
+
+    /**
+     * Recorta el nombre a lo que acepta el programa.
+     *
+     * <p>El limite son 64 bytes, no 64 caracteres: una tilde ocupa dos. Cortar
+     * por bytes a secas partiria el ultimo caracter multibyte por la mitad y el
+     * programa rechazaria la cadena, asi que se retrocede hasta un limite de
+     * caracter.</p>
+     */
+    private String truncateToMaxBytes(String name) {
+        String safe = name == null ? "" : name.trim();
+        byte[] bytes = safe.getBytes(StandardCharsets.UTF_8);
+        if (bytes.length <= MAX_EXPENSE_NAME_BYTES) {
+            return safe;
+        }
+        int end = MAX_EXPENSE_NAME_BYTES;
+        while (end > 0 && (bytes[end] & 0xC0) == 0x80) {
+            end--;
+        }
+        return new String(bytes, 0, end, StandardCharsets.UTF_8);
     }
 
     private byte[] leU64(Long value) {
@@ -550,6 +769,85 @@ public class ExpenseSmartContractAdapter implements ExpenseSmartContractPort {
                 .longValueExact();
     }
 
+    /**
+     * El byte con el que viaja el estado en el encadenado.
+     *
+     * <p>Es explicito y no el ordinal del enum: reordenar las constantes algun
+     * dia cambiaria en silencio todos los hashes ya escritos. El programa usa
+     * exactamente estos mismos valores.</p>
+     */
+    private static int statusByte(PaymentStatus status) {
+        return switch (status) {
+            case PENDING -> 0;
+            case PARTIAL -> 1;
+            case COMPLETED -> 2;
+        };
+    }
+
+    // --- Encadenado -------------------------------------------------------
+    //
+    // Estas tres funciones reproducen byte a byte lo que hace el programa. No
+    // se mandan los hashes ya calculados en la instruccion justamente para no
+    // tener dos definiciones canonicas que puedan separarse; aqui se recalculan
+    // solo para poder guardarlos y comparar, y si alguna vez dejaran de
+    // coincidir, la comparacion contra la cadena lo delata en el acto.
+
+    private static byte[] genesisHash(long backendExpenseId,
+                                      long groupId,
+                                      long creatorUserId,
+                                      long amountMinorUnits,
+                                      long dueDateUnix,
+                                      String name) throws Exception {
+        var digest = MessageDigest.getInstance("SHA-256");
+        digest.update(leBytes(backendExpenseId));
+        digest.update(leBytes(groupId));
+        digest.update(leBytes(creatorUserId));
+        digest.update(leBytes(amountMinorUnits));
+        digest.update(leBytes(dueDateUnix));
+        digest.update(name.getBytes(StandardCharsets.UTF_8));
+        return digest.digest();
+    }
+
+    private static byte[] paymentLineHash(long backendPaymentId,
+                                          long payerUserId,
+                                          long paymentPaidMinorUnits,
+                                          long expensePaidMinorUnits,
+                                          int statusByte,
+                                          boolean confirmed) throws Exception {
+        var digest = MessageDigest.getInstance("SHA-256");
+        digest.update(leBytes(backendPaymentId));
+        digest.update(leBytes(payerUserId));
+        digest.update(leBytes(paymentPaidMinorUnits));
+        digest.update(leBytes(expensePaidMinorUnits));
+        digest.update((byte) statusByte);
+        digest.update((byte) (confirmed ? 1 : 0));
+        return digest.digest();
+    }
+
+    private static byte[] link(byte[] previousChainHash, byte[] lineHash) {
+        try {
+            var digest = MessageDigest.getInstance("SHA-256");
+            digest.update(previousChainHash);
+            digest.update(lineHash);
+            return digest.digest();
+        } catch (Exception exception) {
+            throw new IllegalStateException("SHA-256 is not available", exception);
+        }
+    }
+
+    private static byte[] leBytes(long value) {
+        return ByteBuffer.allocate(Long.BYTES).order(ByteOrder.LITTLE_ENDIAN).putLong(value).array();
+    }
+
+    /** Lo que hace falta de la cuenta del gasto para decidir si escribir o no. */
+    private record ExpenseAccountState(
+            boolean active,
+            boolean settled,
+            byte[] chainHash,
+            int recordsCount,
+            long paidMinorUnits
+    ) {}
+
     private static class AnchorData {
         private final ByteArrayOutputStream output = new ByteArrayOutputStream();
 
@@ -567,8 +865,24 @@ public class ExpenseSmartContractAdapter implements ExpenseSmartContractPort {
             return u64(value);
         }
 
+        AnchorData u8(int value) {
+            output.write(value);
+            return this;
+        }
+
         AnchorData bool(boolean value) {
             output.write(value ? 1 : 0);
+            return this;
+        }
+
+        /**
+         * Cadena en formato Borsh: longitud en 4 bytes little-endian y despues
+         * los bytes UTF-8. La longitud va en bytes, no en caracteres.
+         */
+        AnchorData string(String value) {
+            byte[] bytes = value.getBytes(StandardCharsets.UTF_8);
+            write(ByteBuffer.allocate(Integer.BYTES).order(ByteOrder.LITTLE_ENDIAN).putInt(bytes.length).array());
+            write(bytes);
             return this;
         }
 

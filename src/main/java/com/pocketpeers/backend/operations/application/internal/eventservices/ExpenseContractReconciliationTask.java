@@ -43,6 +43,9 @@ public class ExpenseContractReconciliationTask {
     /** Un minuto, para no competir con el arranque de la aplicacion. */
     private static final long RECONCILIATION_INITIAL_DELAY_MILLIS = 60 * 1000L;
 
+    /** Separacion entre un gasto y el siguiente. Ver {@link #waitBetweenExpenses()}. */
+    private static final long RECONCILIATION_SPACING_MILLIS = 1_000L;
+
     private final ExpenseRepository expenseRepository;
     private final ApplicationEventPublisher applicationEventPublisher;
 
@@ -77,6 +80,31 @@ public class ExpenseContractReconciliationTask {
             LOGGER.info("Reintentando contrato de gasto. expenseId={}, name={}",
                     expense.getId(), expense.getName());
             applicationEventPublisher.publishEvent(new ExpenseCreatedEvent(expense));
+            waitBetweenExpenses();
+        }
+    }
+
+    /**
+     * Separa los reintentos en el tiempo.
+     *
+     * <p>El manejador es asincrono, asi que publicar la lista entera de golpe
+     * arranca un hilo por gasto y todos atacan el RPC a la vez. Cada gasto son
+     * ya varias peticiones —blockhash, envio, sondeo de confirmacion, lectura
+     * de la cuenta— y multiplicadas por los pagos de cada uno. Con ocho gastos
+     * eso basta para que el nodo publico de devnet empiece a devolver 429, y
+     * entonces no falla uno: fallan casi todos a la vez.</p>
+     *
+     * <p>Un segundo entre publicaciones no serializa nada —los hilos siguen
+     * solapandose— pero escalona el arranque lo suficiente para que la rafaga
+     * no llegue toda en el mismo instante. Reconciliar es una tarea de fondo
+     * que corre cada quince minutos: que tarde unos segundos mas no le importa
+     * a nadie.</p>
+     */
+    private void waitBetweenExpenses() {
+        try {
+            Thread.sleep(RECONCILIATION_SPACING_MILLIS);
+        } catch (InterruptedException interruptedException) {
+            Thread.currentThread().interrupt();
         }
     }
 }

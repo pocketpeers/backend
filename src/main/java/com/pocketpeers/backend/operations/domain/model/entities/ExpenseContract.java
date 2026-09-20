@@ -7,6 +7,14 @@ import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.Setter;
 
+/**
+ * Registro del contrato de gasto de la version anterior del programa.
+ *
+ * <p>Ya no se escribe. El programa desplegado usa la semilla {@code expense_v2}
+ * y un layout de cuenta distinto, y su estado vive en {@link ExpenseChain}.
+ * Esta entidad se conserva para no perder lo que se registro con el programa
+ * anterior: son anclajes validos, legibles con el formato de entonces.</p>
+ */
 @Getter
 @Setter
 @Entity

@@ -1,10 +1,10 @@
 package com.pocketpeers.backend.operations.application.internal.eventservices;
 
+import com.pocketpeers.backend.operations.domain.model.aggregates.Payment;
 import com.pocketpeers.backend.operations.domain.model.events.ExpenseCreatedEvent;
 import com.pocketpeers.backend.operations.domain.model.events.PaymentCreatedEvent;
 import com.pocketpeers.backend.operations.domain.model.events.PaymentUpdatedEvent;
 import com.pocketpeers.backend.operations.domain.model.valueobjects.ContractAddress;
-import com.pocketpeers.backend.operations.domain.model.valueobjects.PaymentStatus;
 import com.pocketpeers.backend.operations.domain.model.valueobjects.TransactionHash;
 import com.pocketpeers.backend.operations.domain.exceptions.PermanentContractSyncException;
 import com.pocketpeers.backend.operations.domain.ports.out.ExpenseSmartContractPort;
@@ -25,7 +25,7 @@ public class ExpenseContractEventHandler {
     private static final Logger LOGGER = LoggerFactory.getLogger(ExpenseContractEventHandler.class);
     // Payments can be created almost at the same time as the expense. These
     // retries give the expense contract enough time to be deployed before the
-    // payment account is registered on-chain.
+    // payment is recorded on-chain.
     private static final int PAYMENT_CONTRACT_SYNC_ATTEMPTS = 30;
     private static final long PAYMENT_CONTRACT_SYNC_DELAY_MILLIS = 2_000;
 
@@ -71,6 +71,21 @@ public class ExpenseContractEventHandler {
         syncPayment(event.payment());
     }
 
+    /**
+     * Un pago actualizado toma exactamente la misma ruta que uno nuevo.
+     *
+     * <p>Antes eran dos operaciones distintas porque cada pago tenia su cuenta
+     * en la cadena: una la creaba y otra la sobrescribia. Sin esa cuenta, tanto
+     * registrar como corregir son lo mismo —un eslabon mas en la cadena del
+     * gasto— y mantener dos caminos separados solo serviria para que se
+     * separaran tambien en el comportamiento.</p>
+     */
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
+    @Async
+    public void handler(PaymentUpdatedEvent event) {
+        syncPayment(event.payment());
+    }
+
     private void syncExistingPaymentsForExpense(Long expenseId) {
         // Handles payments that were persisted before Solana finished creating
         // the expense PDA.
@@ -80,14 +95,14 @@ public class ExpenseContractEventHandler {
         }
     }
 
-    private void syncPayment(com.pocketpeers.backend.operations.domain.model.aggregates.Payment payment) {
+    private void syncPayment(Payment payment) {
         for (var attempt = 1; attempt <= PAYMENT_CONTRACT_SYNC_ATTEMPTS; attempt++) {
             try {
-                TransactionHash transactionHash = expenseSmartContractPort.addPaymentToExpenseContract(
-                            payment.getExpense(),
-                            payment
-                    );
-                LOGGER.info("Payment added to expense contract with transaction hash: {}", transactionHash.hash());
+                TransactionHash transactionHash = expenseSmartContractPort.recordPayment(
+                        payment.getExpense(),
+                        payment
+                );
+                LOGGER.info("Payment recorded in expense contract with transaction hash: {}", transactionHash.hash());
                 return;
             } catch (PermanentContractSyncException exception) {
                 // Los reintentos existen para esperar a que el contrato del gasto
@@ -103,7 +118,7 @@ public class ExpenseContractEventHandler {
             } catch (Exception exception) {
                 if (attempt == PAYMENT_CONTRACT_SYNC_ATTEMPTS) {
                     LOGGER.warn(
-                            "Could not add payment to expense contract. paymentId={}, attempts={}, message={}",
+                            "Could not record payment in expense contract. paymentId={}, attempts={}, message={}",
                             payment.getId(),
                             attempt,
                             exception.getMessage()
@@ -112,26 +127,6 @@ public class ExpenseContractEventHandler {
                 }
                 waitBeforeRetry(payment.getId(), attempt, exception);
             }
-        }
-    }
-
-    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
-    @Async
-    public void handler(PaymentUpdatedEvent event) {
-        try {
-            // Keep the on-chain payment state aligned with local confirmation
-            // and amount-paid changes after the database commit succeeds.
-            TransactionHash transactionHash = expenseSmartContractPort.updatePaymentStatus(
-                    event.payment(),
-                    PaymentStatus.valueOf(event.payment().getStatus())
-            );
-            LOGGER.info("Payment status updated in expense contract with transaction hash: {}", transactionHash.hash());
-        } catch (Exception exception) {
-            LOGGER.warn(
-                    "Could not update payment status in expense contract. paymentId={}, message={}",
-                    event.payment().getId(),
-                    exception.getMessage()
-            );
         }
     }
 

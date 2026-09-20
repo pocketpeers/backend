@@ -7,6 +7,13 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 
+/**
+ * Transaccion en cadena de la version anterior del programa.
+ *
+ * <p>Ya no se escribe. Los movimientos del programa actual viven en
+ * {@link ExpenseChainRecord}, que ademas guarda el encadenado. Esta entidad se
+ * conserva para no perder el historial anterior.</p>
+ */
 @NoArgsConstructor
 @Getter
 @Setter
