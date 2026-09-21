@@ -63,6 +63,21 @@ public class PblController {
         return ResponseEntity.ok(history);
     }
 
+    /**
+     * Evolucion del score, reconstruida en cortes de tiempo.
+     *
+     * <p>Separada de {@code /history}: ese devuelve los eventos, que son hechos
+     * registrados, y esta devuelve el score que esos hechos producian en cada
+     * momento. Mezclarlos en una sola respuesta ataria el numero de puntos de la
+     * grafica a cuantos eventos hubo.</p>
+     */
+    @GetMapping("/users/{userId}/score-series")
+    public ResponseEntity<List<ScoreSeriesPointResource>> getScoreSeries(@PathVariable Long userId,
+                                                                         @RequestParam(defaultValue = "90") int days,
+                                                                         @RequestParam(defaultValue = "12") int points) {
+        return ResponseEntity.ok(pblQueryService.getScoreSeries(userId, days, points));
+    }
+
     @GetMapping("/users/{userId}/badges")
     public ResponseEntity<List<BadgeResource>> getUserBadges(@PathVariable Long userId) {
         return ResponseEntity.ok(badgesForUser(userId));

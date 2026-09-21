@@ -9,6 +9,7 @@ import com.pocketpeers.backend.pbl.domain.model.queries.GetReputationHistoryQuer
 import com.pocketpeers.backend.pbl.domain.model.queries.GetUserReputationQuery;
 import com.pocketpeers.backend.pbl.interfaces.rest.resources.LeaderboardEntryResource;
 import com.pocketpeers.backend.pbl.interfaces.rest.resources.ReputationResource;
+import com.pocketpeers.backend.pbl.interfaces.rest.resources.ScoreSeriesPointResource;
 
 import java.util.List;
 
@@ -23,6 +24,15 @@ public interface PblQueryService {
      */
     ReputationResource getUserReputationResource(Long userId);
     List<ReputationEvent> handle(GetReputationHistoryQuery query);
+
+    /**
+     * Evolucion del score visible, reconstruida punto a punto.
+     *
+     * <p>Es la serie que dibuja el panel. Va aqui y no en el controlador por lo
+     * mismo que {@link #getUserReputationResource}: implica recalcular, y ademas
+     * decide que hacer cuando PeerScore esta apagado.</p>
+     */
+    List<ScoreSeriesPointResource> getScoreSeries(Long userId, int days, int points);
     List<UserBadge> getUserBadges(Long userId);
     List<BadgeCatalog> getAllBadges();
     List<LeaderboardEntryResource> handle(GetGroupLeaderboardQuery query);

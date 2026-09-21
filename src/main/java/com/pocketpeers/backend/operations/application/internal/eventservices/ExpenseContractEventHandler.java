@@ -8,7 +8,7 @@ import com.pocketpeers.backend.operations.domain.model.valueobjects.ContractAddr
 import com.pocketpeers.backend.operations.domain.model.valueobjects.TransactionHash;
 import com.pocketpeers.backend.operations.domain.exceptions.PermanentContractSyncException;
 import com.pocketpeers.backend.operations.domain.ports.out.ExpenseSmartContractPort;
-import com.pocketpeers.backend.operations.infrastructure.persistence.jpa.repositories.ExpenseContractRepository;
+import com.pocketpeers.backend.operations.infrastructure.persistence.jpa.repositories.ExpenseChainRepository;
 import com.pocketpeers.backend.operations.infrastructure.persistence.jpa.repositories.PaymentRepository;
 import lombok.AllArgsConstructor;
 import org.slf4j.Logger;
@@ -31,7 +31,7 @@ public class ExpenseContractEventHandler {
 
     private ExpenseSmartContractPort expenseSmartContractPort;
     private PaymentRepository paymentRepository;
-    private ExpenseContractRepository expenseContractRepository;
+    private ExpenseChainRepository expenseChainRepository;
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
     @Async
@@ -58,11 +58,19 @@ public class ExpenseContractEventHandler {
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
     @Async
     public void handler(PaymentCreatedEvent event) {
-        // If the expense contract is not ready yet, the ExpenseCreatedEvent
-        // path will sync all existing payments once deployment finishes.
-        if (expenseContractRepository.findByExpense(event.payment().getExpense()).isEmpty()) {
+        // Si la cadena del gasto todavia no existe, no hay donde anclar: la ruta
+        // de ExpenseCreatedEvent sincronizara todos sus pagos en cuanto termine
+        // el despliegue.
+        //
+        // La pregunta se le hace a `expense_chains`, que es donde vive el estado
+        // del programa actual. Antes se le hacia a `expense_contracts`, del
+        // programa anterior, que dejo de escribirse: desde entonces esta guarda
+        // se cumplia siempre y este camino nunca sincronizaba nada. No se noto
+        // porque los pagos quedaban anclados igual por las otras dos rutas, que
+        // es justamente lo que hace peligroso un vestigio asi.
+        if (expenseChainRepository.findByExpense(event.payment().getExpense()).isEmpty()) {
             LOGGER.info(
-                    "Payment contract sync skipped until expense contract exists. paymentId={}, expenseId={}",
+                    "Payment contract sync skipped until expense chain exists. paymentId={}, expenseId={}",
                     event.payment().getId(),
                     event.payment().getExpense().getId()
             );

@@ -4,7 +4,9 @@ import com.pocketpeers.backend.pbl.application.internal.queryservices.OutcomeRec
 import com.pocketpeers.backend.pbl.domain.model.aggregates.UserReputation;
 import com.pocketpeers.backend.pbl.domain.model.valueobjects.GroupStatsSnapshot;
 import com.pocketpeers.backend.pbl.domain.model.valueobjects.NextLevelGoal;
+import com.pocketpeers.backend.pbl.domain.model.valueobjects.OutcomeRecord;
 import com.pocketpeers.backend.pbl.domain.model.valueobjects.ScoreResult;
+import com.pocketpeers.backend.pbl.domain.model.valueobjects.ScoreSeriesPoint;
 import com.pocketpeers.backend.pbl.domain.services.GroupStatsProvider;
 import com.pocketpeers.backend.pbl.domain.services.PeerScoreCalculator;
 import com.pocketpeers.backend.pbl.domain.services.PeerScoreService;
@@ -187,6 +189,106 @@ public class PeerScoreServiceImpl implements PeerScoreService {
             }
         }
         return results;
+    }
+
+    /**
+     * Cotas de la serie: ni un solo punto dice nada, ni tiene sentido recalcular
+     * cientos de veces para una linea de 160 pixeles de alto.
+     */
+    private static final int MIN_SERIES_POINTS = 2;
+    private static final int MAX_SERIES_POINTS = 60;
+
+    @Override
+    @Transactional
+    public List<ScoreSeriesPoint> scoreSeries(Long userId, int days, int points) {
+        if (userRepository.findById(userId).isEmpty()) {
+            return List.of();
+        }
+        int cuts = Math.max(MIN_SERIES_POINTS, Math.min(points, MAX_SERIES_POINTS));
+        long window = Math.max(1L, days);
+
+        // Una sola foto de estadisticas para toda la serie, por el mismo motivo
+        // que recalculateFor: los puntos de una linea se comparan entre si, y
+        // medir cada uno con medianas distintas produciria escalones que no
+        // corresponden a nada que la persona haya hecho.
+        //
+        // La foto es la de hoy, no la de cada corte. Es una aproximacion
+        // deliberada: reconstruir las estadisticas de cada grupo en cada corte
+        // multiplicaria el costo, y las medianas y tasas se mueven despacio, que
+        // es la misma razon por la que se cachean diez minutos.
+        var stats = groupStatsProvider.snapshot();
+        var now = LocalDateTime.now();
+        var from = now.minusDays(window);
+
+        // El historial completo, no solo el de la ventana: un evento de hace un
+        // ano sigue siendo evidencia en el primer corte, con su decaimiento. La
+        // ventana decide que se dibuja, no que se toma en cuenta.
+        var outcomes = OutcomeRecordAssembler.toOutcomes(
+                reputationEventRepository.findAllByUser_IdAndCounterpartyIdIsNotNullAndAmountIsNotNull(userId));
+        var reverse = reverseOutcomes(userId);
+
+        List<ScoreSeriesPoint> series = new ArrayList<>(cuts);
+        long span = Duration.between(from, now).toSeconds();
+        for (int i = 0; i < cuts; i++) {
+            // El ultimo corte es exactamente `now` y no una aproximacion: es el
+            // punto que la app compara contra la tarjeta de score, y un desfase
+            // de segundos ahi reabriria justo la inconsistencia que esto corrige.
+            var at = i == cuts - 1 ? now : from.plusSeconds(span * i / (cuts - 1));
+            series.add(ScoreSeriesPoint.from(at, scoreAt(outcomes, reverse, stats, at)));
+        }
+        return series;
+    }
+
+    /**
+     * El score con la evidencia que existia en un instante dado.
+     *
+     * <p>Filtrar por {@code resolvedAt} y no por cuando se registro el evento es
+     * lo que hace fiel la reconstruccion: un pago se vuelve evidencia cuando se
+     * pago, que es tambien la fecha desde la que envejece.</p>
+     */
+    private ScoreResult scoreAt(List<OutcomeRecord> outcomes, List<ReverseOutcome> reverse,
+                                GroupStatsSnapshot stats, LocalDateTime at) {
+        List<OutcomeRecord> visible = new ArrayList<>();
+        for (OutcomeRecord outcome : outcomes) {
+            if (!outcome.resolvedAt().isAfter(at)) {
+                visible.add(outcome);
+            }
+        }
+
+        Map<Long, Double> reverseEvidence = new HashMap<>();
+        for (ReverseOutcome entry : reverse) {
+            if (entry.outcome().resolvedAt().isAfter(at)) {
+                continue;
+            }
+            reverseEvidence.merge(entry.payerId(),
+                    calculator.evidenceMass(entry.outcome(), stats.byGroup(), stats.global(), at),
+                    Double::sum);
+        }
+
+        return calculator.calculate(visible, stats.byGroup(), stats.global(), reverseEvidence, at);
+    }
+
+    /**
+     * La evidencia inversa sin agregar, para poder recortarla por fecha.
+     *
+     * <p>{@link #reverseEvidence} ya devuelve el mapa sumado, que es lo que quiere
+     * un recalculo puntual. La serie no puede usarlo: necesita descartar por
+     * corte los desenlaces que todavia no habian ocurrido, y de una suma ya
+     * hecha no se puede quitar nada.</p>
+     */
+    private List<ReverseOutcome> reverseOutcomes(Long userId) {
+        List<ReverseOutcome> reverse = new ArrayList<>();
+        for (var event : reputationEventRepository.findAllByCounterpartyIdAndAmountIsNotNull(userId)) {
+            var outcome = OutcomeRecordAssembler.toOutcome(event);
+            if (outcome == null || event.getUser() == null) {
+                continue;
+            }
+            reverse.add(new ReverseOutcome(event.getUser().getId(), outcome));
+        }
+        return reverse;
+    }
+
+    private record ReverseOutcome(Long payerId, OutcomeRecord outcome) {
     }
 
     @Override

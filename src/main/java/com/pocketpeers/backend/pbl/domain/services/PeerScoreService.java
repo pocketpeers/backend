@@ -2,6 +2,7 @@ package com.pocketpeers.backend.pbl.domain.services;
 
 import com.pocketpeers.backend.pbl.domain.model.valueobjects.NextLevelGoal;
 import com.pocketpeers.backend.pbl.domain.model.valueobjects.ScoreResult;
+import com.pocketpeers.backend.pbl.domain.model.valueobjects.ScoreSeriesPoint;
 
 import java.util.List;
 import java.util.Map;
@@ -47,6 +48,26 @@ public interface PeerScoreService {
      * @return el resultado de cada usuario que existe, indexado por id
      */
     Map<Long, ScoreResult> recalculateFor(List<Long> userIds);
+
+    /**
+     * Reconstruye como evoluciono el score de un usuario en los ultimos dias.
+     *
+     * <p>Recalcula el score en cortes equiespaciados, y en cada corte solo deja
+     * entrar la evidencia que ya estaba resuelta en ese momento. Es posible
+     * porque el calculador es una funcion pura que recibe el instante como
+     * argumento: la misma propiedad que permite simular el paso del tiempo en la
+     * validacion sirve aqui para mirar hacia atras.</p>
+     *
+     * <p>No persiste nada ni toca la cache: es una consulta historica, y escribir
+     * el resultado de un corte del pasado sobre el agregado dejaria al usuario
+     * con el score que tenia hace tres meses.</p>
+     *
+     * @param userId usuario a reconstruir
+     * @param days   cuantos dias hacia atras abarca la serie
+     * @param points cuantos cortes devolver, incluido el instante actual
+     * @return los cortes del mas antiguo al mas reciente, o vacio si el usuario no existe
+     */
+    List<ScoreSeriesPoint> scoreSeries(Long userId, int days, int points);
 
     /** Que le falta para el siguiente nivel, o null si ya esta en el maximo. */
     NextLevelGoal goalFor(ScoreResult result);

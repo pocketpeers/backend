@@ -10,12 +10,19 @@ import lombok.Setter;
 /**
  * La cadena de un gasto anclada en Solana.
  *
- * <p>Tabla nueva a proposito, separada de {@link ExpenseContract}. El programa
+ * <p>Tabla nueva a proposito, separada de la del programa anterior. Aquel
  * cambio de layout y de semilla, asi que un anclaje viejo y uno nuevo no son
  * comparables: mezclarlos en la misma tabla obligaria a que cada consulta
  * supiera distinguirlos, y el dia que una se olvidara mostraria un hash que no
- * prueba lo que dice probar. Los registros anteriores se quedan donde estan,
- * intactos.</p>
+ * prueba lo que dice probar.</p>
+ *
+ * <p>Las entidades de aquel programa —{@code ExpenseContract} y
+ * {@code ContractTransaction}— ya no existen en el codigo: nada las escribia, y
+ * su unica lectura era una guarda que preguntaba por gastos que aquella tabla
+ * ya no podia conocer, asi que respondia que no siempre. Sus tablas
+ * siguen en las bases que ya las tienen, con sus registros intactos, porque
+ * `ddl-auto=update` no borra nada; lo que se evita es recrearlas vacias en cada
+ * base nueva.</p>
  */
 @Getter
 @Setter

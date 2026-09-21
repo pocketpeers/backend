@@ -18,7 +18,9 @@ import com.pocketpeers.backend.pbl.infrastructure.persistence.jpa.repositories.U
 import com.pocketpeers.backend.pbl.infrastructure.persistence.jpa.repositories.UserReputationRepository;
 import com.pocketpeers.backend.pbl.interfaces.rest.resources.LeaderboardEntryResource;
 import com.pocketpeers.backend.pbl.interfaces.rest.resources.ReputationResource;
+import com.pocketpeers.backend.pbl.interfaces.rest.resources.ScoreSeriesPointResource;
 import com.pocketpeers.backend.pbl.interfaces.rest.transform.ReputationResourceFromEntityAssembler;
+import com.pocketpeers.backend.pbl.interfaces.rest.transform.ScoreSeriesPointResourceFromEntityAssembler;
 import com.pocketpeers.backend.users.domain.model.aggregates.UserInformation;
 import com.pocketpeers.backend.users.infrastructure.persistence.jpa.repositories.UserInformationRepository;
 import com.pocketpeers.backend.users.infrastructure.persistence.jpa.repositories.UserRepository;
@@ -84,6 +86,22 @@ public class PblQueryServiceImpl implements PblQueryService {
     public List<ReputationEvent> handle(GetReputationHistoryQuery query) {
         return reputationEventRepository.findAllByUser_IdAndOccurredAtAfterOrderByOccurredAtAsc(
                 query.userId(), LocalDateTime.now().minusDays(query.days()));
+    }
+
+    @Override
+    public List<ScoreSeriesPointResource> getScoreSeries(Long userId, int days, int points) {
+        // Con el motor nuevo apagado no hay serie que reconstruir: el score que
+        // se muestra es entonces el contador PBL, y ese ya viene punto a punto en
+        // el `resultingScore` de cada evento del historial. Devolver una serie
+        // calculada con PeerScore mientras la tarjeta muestra el contador seria
+        // volver a tener dos numeros distintos para lo mismo, que es justo lo que
+        // esta serie existe para evitar.
+        if (!peerScoreProperties.isEnabled()) {
+            return List.of();
+        }
+        return peerScoreService.scoreSeries(userId, days, points).stream()
+                .map(ScoreSeriesPointResourceFromEntityAssembler::toResourceFromEntity)
+                .toList();
     }
 
     @Override

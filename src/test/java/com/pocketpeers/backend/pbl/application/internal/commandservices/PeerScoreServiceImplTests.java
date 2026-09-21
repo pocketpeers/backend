@@ -2,6 +2,7 @@ package com.pocketpeers.backend.pbl.application.internal.commandservices;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.within;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.atLeast;
 import static org.mockito.Mockito.times;
@@ -269,6 +270,17 @@ class PeerScoreServiceImplTests {
     // ------------------------------------------------------------------
     // Auxiliares
     // ------------------------------------------------------------------
+
+    /**
+     * Solo el usuario, sin su reputacion guardada.
+     *
+     * <p>La serie no lee ni escribe el agregado: es una consulta historica. Darle
+     * la reputacion de todas formas dejaria un stub que nadie usa, y Mockito
+     * estricto lo rechaza con razon.</p>
+     */
+    private void givenUser(long userId) {
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user(userId)));
+    }
 
     private UserReputation givenReputationFor(long userId) {
         var user = user(userId);
