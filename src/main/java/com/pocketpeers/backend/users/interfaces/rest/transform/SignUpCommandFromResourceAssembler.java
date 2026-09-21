@@ -9,6 +9,6 @@ import java.util.ArrayList;
 public class SignUpCommandFromResourceAssembler {
     public static SignUpCommand toCommandFromResource(SignUpResource resource) {
         var roles = resource.roles() != null ? resource.roles().stream().map(name -> Role.toRoleFromName(name)).toList() : new ArrayList<Role>();
-        return new SignUpCommand(resource.username(), resource.password(), roles, resource.firstName(), resource.lastName(), resource.phoneNumber(), resource.photo(), resource.email());
+        return new SignUpCommand(resource.username(), resource.password(), roles, resource.firstName(), resource.lastName(), resource.phoneNumber(), resource.photo(), resource.email(), resource.documentType(), resource.documentNumber());
     }
 }

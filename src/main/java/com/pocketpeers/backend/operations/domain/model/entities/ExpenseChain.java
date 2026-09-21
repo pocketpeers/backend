@@ -36,7 +36,7 @@ public class ExpenseChain extends AuditableModel {
     @JoinColumn(name = "expense_id")
     private Expense expense;
 
-    /** La PDA del gasto, derivada de la semilla {@code expense_v2}. */
+    /** La PDA del gasto, derivada de la semilla {@code expense_v3}. */
     @Embedded
     private ContractAddress contractAddress;
 

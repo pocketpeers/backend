@@ -9,9 +9,11 @@ import com.pocketpeers.backend.users.domain.services.UserInformationCommandServi
 import com.pocketpeers.backend.users.domain.services.UserInformationQueryService;
 import com.pocketpeers.backend.users.interfaces.rest.resources.CreateUserInformationResource;
 import com.pocketpeers.backend.users.interfaces.rest.resources.UpdateUserInformationResource;
+import com.pocketpeers.backend.users.interfaces.rest.resources.MyProfileResource;
 import com.pocketpeers.backend.users.interfaces.rest.resources.UserInformationResource;
 import com.pocketpeers.backend.users.interfaces.rest.transform.CreateUserInformationCommandFromResourceAssembler;
 import com.pocketpeers.backend.users.interfaces.rest.transform.UpdateUserInformationCommandFromResourceAssembler;
+import com.pocketpeers.backend.users.interfaces.rest.transform.MyProfileResourceFromEntityAssembler;
 import com.pocketpeers.backend.users.interfaces.rest.transform.UserInformationResourceFromEntityAssembler;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
@@ -103,11 +105,14 @@ public class UsersInformationController {
             @ApiResponse(responseCode = "404", description = "User information not found")
     })
     @GetMapping("/user")
-    public ResponseEntity<UserInformationResource> getMyProfile(Authentication authentication) {
+    public ResponseEntity<MyProfileResource> getMyProfile(Authentication authentication) {
         String username = authentication.getName();
         var userInformation = userInformationQueryService.getByUsername(username);
         if (userInformation.isEmpty()) return ResponseEntity.badRequest().build();
-        var profileResource = UserInformationResourceFromEntityAssembler.toResourceFromEntity(userInformation.get());
+        // MyProfileResource y no UserInformationResource: este endpoint sirve
+        // siempre el perfil de quien llama, asi que es el unico sitio donde el
+        // documento de identidad puede viajar sin exponer el de otra persona.
+        var profileResource = MyProfileResourceFromEntityAssembler.toResourceFromEntity(userInformation.get());
         return ResponseEntity.ok(profileResource);
     }
 
@@ -131,16 +136,25 @@ public class UsersInformationController {
             @ApiResponse(responseCode = "400", description = "Bad request"),
             @ApiResponse(responseCode = "404", description = "User information not found")
     })
+    /**
+     * Actualiza el perfil propio.
+     *
+     * <p>El documento de identidad NO se acepta aqui, y no es un olvido: si el
+     * participante pudiera cambiarlo despues de registrarse, el vinculo entre la
+     * cuenta y la persona —que es lo unico que este dato acredita para el
+     * estudio— dejaria de valer. Se devuelve para que la app pueda mostrarlo,
+     * pero solo de lectura. Un error de tipeo se corrige en la base.</p>
+     */
     @PutMapping("/user")
-    public ResponseEntity<UserInformationResource> updateUserInformationById(@RequestBody UpdateUserInformationResource resource, Authentication authentication) {
+    public ResponseEntity<MyProfileResource> updateUserInformationById(@RequestBody UpdateUserInformationResource resource, Authentication authentication) {
         String username = authentication.getName();
         var userInformation = userInformationQueryService.getByUsername(username);
         if (userInformation.isEmpty()) return ResponseEntity.notFound().build();
         var updateUserCommand = UpdateUserInformationCommandFromResourceAssembler.toCommandfromResource(userInformation.get().getId(), resource);
         var updatedUserInformation = userInformationCommandService.handle(updateUserCommand);
         if (updatedUserInformation.isEmpty()) return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
-        var userInformationResource = UserInformationResourceFromEntityAssembler.toResourceFromEntity(updatedUserInformation.get());
-        return ResponseEntity.ok(userInformationResource);
+        var profileResource = MyProfileResourceFromEntityAssembler.toResourceFromEntity(updatedUserInformation.get());
+        return ResponseEntity.ok(profileResource);
     }
 
 

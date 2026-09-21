@@ -48,7 +48,7 @@ public class ExpenseSmartContractAdapter implements ExpenseSmartContractPort {
     // con el formato de entonces, y este programa no los toca.
     //
     // Ya no hay semilla de pago: los pagos no crean cuentas.
-    private static final byte[] EXPENSE_SEED = "expense_v2".getBytes(StandardCharsets.UTF_8);
+    private static final byte[] EXPENSE_SEED = "expense_v3".getBytes(StandardCharsets.UTF_8);
     private static final int MAX_EXPENSE_NAME_BYTES = 64;
     private static final Duration SIGNATURE_STATUS_TIMEOUT = Duration.ofSeconds(90);
     private static final long SIGNATURE_STATUS_POLL_MILLIS = 1_500;
@@ -549,16 +549,24 @@ public class ExpenseSmartContractAdapter implements ExpenseSmartContractPort {
             byte[] raw = Base64.getDecoder().decode(data.get(0));
 
             ByteBuffer buffer = ByteBuffer.wrap(raw).order(ByteOrder.LITTLE_ENDIAN);
-            buffer.position(8 + 32 + 8 + 8 + 8 + 8 + 8); // discriminador, authority y los cinco enteros
-            int nameLength = buffer.getInt();
-            buffer.position(buffer.position() + nameLength);
+            // Layout fijo de 103 bytes, sin campos de longitud variable: el
+            // nombre del gasto ya no se guarda en la cuenta, solo se hashea. Por
+            // eso aqui basta un salto constante y no hay que leer un prefijo de
+            // longitud para saber donde empieza el resto.
+            //
+            //   0  discriminador (8)   40  backend_expense_id (8)
+            //   8  authority (32)      48  amount_minor_units (8)
+            //  56  paid_minor_units (8)
+            //  64  chain_hash (32)     96  records_count (4)
+            // 100  active (1)         101  settled (1)     102  bump (1)
+            buffer.position(8 + 32 + 8 + 8); // discriminador, authority, id de backend e importe
 
-            boolean active = buffer.get() != 0;
-            boolean settled = buffer.get() != 0;
+            long paidMinorUnits = buffer.getLong();
             byte[] chainHash = new byte[32];
             buffer.get(chainHash);
             int recordsCount = buffer.getInt();
-            long paidMinorUnits = buffer.getLong();
+            boolean active = buffer.get() != 0;
+            boolean settled = buffer.get() != 0;
 
             return new ExpenseAccountState(active, settled, chainHash, recordsCount, paidMinorUnits);
         } catch (Exception exception) {

@@ -17,6 +17,7 @@ import com.pocketpeers.backend.users.domain.model.commands.SignInCommand;
 import com.pocketpeers.backend.users.domain.model.commands.SignUpCommand;
 import com.pocketpeers.backend.users.domain.model.entities.PasswordResetCode;
 import com.pocketpeers.backend.users.domain.model.queries.GetUserInformationByUserIdQuery;
+import com.pocketpeers.backend.users.domain.model.valueobjects.IdentityDocument;
 import com.pocketpeers.backend.users.domain.model.valueobjects.EmailAddress;
 import com.pocketpeers.backend.users.domain.model.valueobjects.PasswordPolicy;
 import com.pocketpeers.backend.users.domain.services.SmtpService;
@@ -129,9 +130,14 @@ public class UserCommandServiceImpl implements UserCommandService {
         var roles = command.roles().stream().map(role -> roleRepository.findByName(role.getName()).orElseThrow(
                 () -> new RuntimeException("Role not found")
         )).toList();
+        // El documento se valida antes de crear el usuario, por el mismo motivo
+        // que la contrasena: si el numero esta mal, no debe quedar una cuenta a
+        // medio registrar que luego haya que limpiar a mano.
+        var identityDocument = IdentityDocument.of(command.documentType(), command.documentNumber());
+
         var user = new User(command.username(), hashingService.encode(command.password()), roles);
         var savedUser = userRepository.save(user);
-        CreateUserInformationCommand userInformationCommand = new CreateUserInformationCommand(command.firstName(), command.lastName(), command.phoneNumber(), command.photo(), command.email(), savedUser.getId());
+        CreateUserInformationCommand userInformationCommand = new CreateUserInformationCommand(command.firstName(), command.lastName(), command.phoneNumber(), command.photo(), command.email(), savedUser.getId(), identityDocument);
         userInformationCommandService.handle(userInformationCommand);
         return Optional.of(user);
     }

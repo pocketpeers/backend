@@ -5,6 +5,7 @@ import com.pocketpeers.backend.users.domain.model.aggregates.UserInformation;
 import com.pocketpeers.backend.users.domain.model.commands.CreateUserInformationCommand;
 import com.pocketpeers.backend.users.domain.model.commands.DeleteUserInformationCommand;
 import com.pocketpeers.backend.users.domain.model.commands.UpdateUserInformationCommand;
+import com.pocketpeers.backend.users.domain.model.valueobjects.IdentityDocument;
 import com.pocketpeers.backend.users.domain.model.valueobjects.EmailAddress;
 import com.pocketpeers.backend.users.domain.services.UserInformationCommandService;
 import com.pocketpeers.backend.users.infrastructure.persistence.jpa.repositories.UserInformationRepository;
@@ -36,8 +37,18 @@ public class UserInformationCommandServiceImpl implements UserInformationCommand
         userInformationRepository.findByEmail(emailAddress).map(user -> {
             throw new IllegalArgumentException("User with email " + command.email() + " already exists");
         });
+        // Un documento ya usado significa que esa persona ya tiene cuenta, que es
+        // justo lo que el estudio necesita descartar. La restriccion de unicidad
+        // de la tabla es la que lo garantiza de verdad; esto solo convierte el
+        // choque en un mensaje que la aplicacion puede mostrar.
+        if (command.identityDocument() != null
+                && userInformationRepository.existsByIdentityDocument(command.identityDocument())) {
+            throw new IllegalArgumentException("Ya existe una cuenta registrada con ese documento de identidad");
+        }
+
         Optional<User> userId = userRepository.findById(command.userId());
-        var userInformation = new UserInformation(command.firstName(), command.lastName(), command.phoneNumber(), command.photo(), command.email(), userId.get());
+        var userInformation = new UserInformation(command.firstName(), command.lastName(), command.phoneNumber(),
+                command.photo(), command.email(), userId.get(), command.identityDocument());
         userInformationRepository.save(userInformation);
         return Optional.of(userInformation);
     }

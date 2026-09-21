@@ -9,6 +9,8 @@ public record SignUpResource(String username,
                              String lastName,
                              String phoneNumber,
                              String photo,
-                             String email) {
+                             String email,
+                             /** DNI, CE o PASAPORTE. */
+                             String documentType,
+                             String documentNumber) {
 }
-
