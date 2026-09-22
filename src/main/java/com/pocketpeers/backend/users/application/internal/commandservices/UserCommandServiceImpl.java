@@ -16,6 +16,15 @@ import com.pocketpeers.backend.users.domain.model.commands.RequestPasswordResetC
 import com.pocketpeers.backend.users.domain.model.commands.SignInCommand;
 import com.pocketpeers.backend.users.domain.model.commands.SignUpCommand;
 import com.pocketpeers.backend.users.domain.model.entities.PasswordResetCode;
+import com.pocketpeers.backend.users.domain.model.entities.PendingRegistration;
+import com.pocketpeers.backend.users.domain.exceptions.InvalidSignUpCodeException;
+import com.pocketpeers.backend.users.domain.model.commands.ConfirmSignUpCommand;
+import com.pocketpeers.backend.users.domain.model.commands.RequestSignUpCommand;
+import com.pocketpeers.backend.users.infrastructure.persistence.jpa.repositories.PendingRegistrationRepository;
+import com.pocketpeers.backend.users.domain.model.valueobjects.Roles;
+import org.springframework.beans.factory.annotation.Value;
+
+import java.util.List;
 import com.pocketpeers.backend.users.domain.model.queries.GetUserInformationByUserIdQuery;
 import com.pocketpeers.backend.users.domain.model.valueobjects.IdentityDocument;
 import com.pocketpeers.backend.users.domain.model.valueobjects.EmailAddress;
@@ -52,7 +61,20 @@ public class UserCommandServiceImpl implements UserCommandService {
     private final UserInformationQueryService userInformationQueryService;
     private final UserInformationRepository userInformationRepository;
     private final PasswordResetCodeRepository passwordResetCodeRepository;
+    private final PendingRegistrationRepository pendingRegistrationRepository;
     private final SmtpService smtpService;
+
+    /**
+     * Si el alta exige confirmar el correo antes de crear la cuenta.
+     *
+     * <p>Se deja configurable porque el publico objetivo de esta aplicacion
+     * —personas no bancarizadas, muchas con poca practica digital— no siempre
+     * tiene un correo que revise. Exigir la confirmacion protege los datos, pero
+     * en un trabajo de campo puede dejar fuera a quien no puede abrir su bandeja
+     * en ese momento. El interruptor permite decidirlo sin recompilar.</p>
+     */
+    @Value("${authentication.email-verification.enabled:true}")
+    private boolean emailVerificationEnabled;
 
     private final RoleRepository roleRepository;
 
@@ -61,6 +83,7 @@ public class UserCommandServiceImpl implements UserCommandService {
                                   UserInformationQueryService userInformationQueryService,
                                   UserInformationRepository userInformationRepository,
                                   PasswordResetCodeRepository passwordResetCodeRepository,
+                                  PendingRegistrationRepository pendingRegistrationRepository,
                                   SmtpService smtpService) {
         this.userRepository = userRepository;
         this.hashingService = hashingService;
@@ -70,6 +93,7 @@ public class UserCommandServiceImpl implements UserCommandService {
         this.userInformationQueryService = userInformationQueryService;
         this.userInformationRepository = userInformationRepository;
         this.passwordResetCodeRepository = passwordResetCodeRepository;
+        this.pendingRegistrationRepository = pendingRegistrationRepository;
         this.smtpService = smtpService;
     }
 
@@ -140,6 +164,174 @@ public class UserCommandServiceImpl implements UserCommandService {
         CreateUserInformationCommand userInformationCommand = new CreateUserInformationCommand(command.firstName(), command.lastName(), command.phoneNumber(), command.photo(), command.email(), savedUser.getId(), identityDocument);
         userInformationCommandService.handle(userInformationCommand);
         return Optional.of(user);
+    }
+
+    // ------------------------------------------------------------------
+    // Alta en dos pasos: verificacion del correo
+    // ------------------------------------------------------------------
+
+    /**
+     * Primer paso: guarda el alta en espera y manda un codigo al correo.
+     *
+     * <p>Nada se crea todavia. El orden es lo importante: si la cuenta se
+     * creara antes de comprobar el correo, una direccion mal escrita dejaria
+     * una cuenta activa que su dueno no puede recuperar nunca, porque la
+     * recuperacion de contrasena se apoya en ese mismo correo. Y una direccion
+     * ajena dejaria una cuenta a nombre de alguien que no pidio nada.</p>
+     *
+     * <p>Aqui si se responde distinto cuando el usuario o el correo ya existen,
+     * al contrario que en la recuperacion de contrasena. Es una diferencia
+     * deliberada: un formulario de alta tiene que decir que ese nombre esta
+     * tomado, porque si no la persona no puede completar el registro. La
+     * informacion que se filtra es la misma que cualquiera obtendria probando a
+     * registrarse.</p>
+     *
+     * @return true si se envio un codigo y hace falta confirmarlo; false si la
+     *         verificacion esta desactivada y la cuenta ya quedo creada
+     */
+    @Override
+    @Transactional
+    public boolean handle(RequestSignUpCommand command) {
+        var now = LocalDateTime.now();
+
+        // Todo lo que puede rechazar el alta se comprueba antes de enviar nada.
+        // Mandar un codigo y descubrir despues que el documento estaba mal
+        // obligaria a repetir el ciclo entero por un dato que ya se conocia.
+        if (userRepository.existsByUsername(command.username())) {
+            throw new UsernameAlreadyTakenException(command.username());
+        }
+        if (userInformationRepository.findByEmail(new EmailAddress(command.email())).isPresent()) {
+            throw new IllegalArgumentException("Ya existe una cuenta con ese correo");
+        }
+        requireStrongPassword(command.password());
+        IdentityDocument.of(command.documentType(), command.documentNumber());
+
+        // Un alta pendiente reserva el nombre de usuario mientras vive, para que
+        // dos personas distintas no pidan el codigo con el mismo nombre y la
+        // segunda en confirmar se estrelle despues de haberlo hecho todo bien.
+        //
+        // La reserva ignora el alta pendiente del propio correo: volver atras y
+        // pedir otro codigo es lo normal, y antes esa solicitud chocaba contra
+        // la anterior de uno mismo.
+        if (pendingRegistrationRepository.existsUsablePendingForOtherEmail(
+                command.username(), command.email(), now)) {
+            throw new UsernameAlreadyTakenException(command.username());
+        }
+
+        if (!emailVerificationEnabled) {
+            // Interruptor apagado: se crea la cuenta de una vez y se avisa a la
+            // aplicacion para que no pida un codigo que nadie envio.
+            LOGGER.info("Email verification disabled; creating the account without a code");
+            handle(toSignUpCommand(command));
+            // Tambien por este camino hay cuenta nueva, y tambien merece su
+            // bienvenida: si solo se enviara tras confirmar el codigo, apagar la
+            // verificacion dejaria a esos usuarios sin ninguna explicacion de
+            // que hacer con la aplicacion.
+            smtpService.sendWelcomeEmailAsync(command.email(), welcomeName(
+                    command.firstName(), command.username()));
+            return false;
+        }
+
+        // Pedir un codigo nuevo invalida el anterior: no deben quedar varios
+        // vivos para el mismo correo.
+        pendingRegistrationRepository.invalidatePendingFor(command.email(), now);
+
+        var code = generateCode();
+        pendingRegistrationRepository.save(new PendingRegistration(
+                command.email(),
+                command.username(),
+                hashingService.encode(command.password()),
+                command.firstName(),
+                command.lastName(),
+                command.phoneNumber(),
+                command.photo(),
+                command.documentType(),
+                command.documentNumber(),
+                hashingService.encode(code),
+                now));
+
+        smtpService.sendSignUpVerificationEmailAsync(
+                command.email(),
+                command.firstName() == null || command.firstName().isBlank()
+                        ? command.username()
+                        : command.firstName(),
+                code);
+        return true;
+    }
+
+    /**
+     * Segundo paso: canjea el codigo y crea la cuenta de verdad.
+     *
+     * <p>Cada intento fallido se cuenta y se persiste, para que un codigo de
+     * seis digitos no se pueda adivinar probando combinaciones.</p>
+     */
+    @Override
+    @Transactional
+    public Optional<User> handle(ConfirmSignUpCommand command) {
+        var now = LocalDateTime.now();
+        var pending = pendingRegistrationRepository
+                .findFirstByEmailOrderByIdDesc(command.email())
+                .orElseThrow(InvalidSignUpCodeException::new);
+
+        if (!pending.isUsable(now)) {
+            throw new InvalidSignUpCodeException();
+        }
+
+        if (!hashingService.matches(command.code(), pending.getCodeHash())) {
+            pending.registerFailedAttempt();
+            pendingRegistrationRepository.save(pending);
+            throw new InvalidSignUpCodeException();
+        }
+
+        // El nombre pudo ocuparse entre la peticion y la confirmacion: la
+        // reserva solo cubre a otros registros pendientes, no a un alta directa
+        // ni a una hecha antes de que existiera este flujo.
+        if (userRepository.existsByUsername(pending.getUsername())) {
+            throw new UsernameAlreadyTakenException(pending.getUsername());
+        }
+
+        var roles = List.of(roleRepository.findByName(Roles.ROLE_USER)
+                .orElseThrow(() -> new RuntimeException("Role not found")));
+        var identityDocument = IdentityDocument.of(pending.getDocumentType(), pending.getDocumentNumber());
+
+        // La contrasena ya viaja cifrada desde el primer paso, asi que se pasa
+        // tal cual: volver a cifrarla produciria un hash de un hash y nadie
+        // podria iniciar sesion.
+        var user = userRepository.save(new User(pending.getUsername(), pending.getPasswordHash(), roles));
+        userInformationCommandService.handle(new CreateUserInformationCommand(
+                pending.getFirstName(), pending.getLastName(), pending.getPhoneNumber(),
+                pending.getPhoto(), pending.getEmail(), user.getId(), identityDocument));
+
+        pending.markUsed(now);
+        pendingRegistrationRepository.save(pending);
+
+        // La bienvenida sale ahora, con la cuenta ya creada, y en segundo plano:
+        // un correo de cortesia no debe poder retrasar ni tumbar la respuesta de
+        // un registro que si se completo.
+        smtpService.sendWelcomeEmailAsync(pending.getEmail(), welcomeName(
+                pending.getFirstName(), pending.getUsername()));
+
+        LOGGER.info("Sign-up confirmed and account created. userId={}", user.getId());
+        return Optional.of(user);
+    }
+
+    /**
+     * Con que nombre saludar.
+     *
+     * <p>El nombre de pila si lo hay, y el usuario si no. Un correo que empieza
+     * con "Hola ," por un campo vacio se lee como generado por una maquina
+     * rota, que es justo lo contrario de lo que busca una bienvenida.</p>
+     */
+    private String welcomeName(String firstName, String username) {
+        return firstName == null || firstName.isBlank() ? username : firstName;
+    }
+
+    private SignUpCommand toSignUpCommand(RequestSignUpCommand command) {
+        var roles = List.of(roleRepository.findByName(Roles.ROLE_USER)
+                .orElseThrow(() -> new RuntimeException("Role not found")));
+        return new SignUpCommand(command.username(), command.password(), roles,
+                command.firstName(), command.lastName(), command.phoneNumber(),
+                command.photo(), command.email(), command.documentType(), command.documentNumber());
     }
 
     // ------------------------------------------------------------------

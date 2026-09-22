@@ -10,6 +10,9 @@ public interface ExpenseQueryService {
     List<Expense> handle(GetAllExpensesQuery query);
     Optional<Expense> handle(GetExpenseByIdQuery query);
     List<Expense> handle(GetAllExpensesByUserIdQuery query);
+
+    /** Gastos donde el usuario participa: los que creo y aquellos donde debe. */
+    List<Expense> handle(GetExpensesWhereUserParticipatesQuery query);
     Optional<Expense> handle(GetExpenseByNameAndUserIdQuery query);
     List<Expense> handle(SearchExpensesByNameQuery query);
     List<Expense> handle(GetAllExpensesByGroupIdQuery query);

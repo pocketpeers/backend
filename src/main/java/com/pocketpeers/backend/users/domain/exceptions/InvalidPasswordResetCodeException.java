@@ -9,6 +9,6 @@ package com.pocketpeers.backend.users.domain.exceptions;
  */
 public class InvalidPasswordResetCodeException extends RuntimeException {
     public InvalidPasswordResetCodeException() {
-        super("El codigo es incorrecto o ya vencio");
+        super("El código es incorrecto o ya venció");
     }
 }

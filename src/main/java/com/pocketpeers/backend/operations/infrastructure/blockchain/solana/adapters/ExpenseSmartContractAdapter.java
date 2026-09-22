@@ -19,7 +19,12 @@ import org.p2p.solanaj.core.AccountMeta;
 import org.p2p.solanaj.core.PublicKey;
 import org.p2p.solanaj.core.Transaction;
 import org.p2p.solanaj.core.TransactionInstruction;
+import org.p2p.solanaj.programs.ComputeBudgetProgram;
 import org.p2p.solanaj.programs.SystemProgram;
+import org.p2p.solanaj.rpc.types.config.RpcSendTransactionConfig;
+import org.p2p.solanaj.utils.Base58;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -42,6 +47,8 @@ import java.util.Map;
 @Service
 @RequiredArgsConstructor
 public class ExpenseSmartContractAdapter implements ExpenseSmartContractPort {
+    private static final Logger LOGGER = LoggerFactory.getLogger(ExpenseSmartContractAdapter.class);
+
     // Semilla del PDA del gasto. Cambio junto con el layout de la cuenta: una
     // cuenta escrita con el formato viejo no se puede deserializar con el nuevo,
     // asi que los gastos anteriores se quedan donde estan, intactos y legibles
@@ -54,6 +61,29 @@ public class ExpenseSmartContractAdapter implements ExpenseSmartContractPort {
     private static final long SIGNATURE_STATUS_POLL_MILLIS = 1_500;
     private static final ZoneId LIMA_ZONE = ZoneId.of("America/Lima");
 
+    /**
+     * Cada cuantos sondeos se vuelve a difundir la transaccion.
+     *
+     * <p>Con un sondeo cada 1,5 s, reenviar cada cuatro difunde cada seis
+     * segundos. Mas seguido no ayuda —el nodo ya la tiene— y gasta cuota del
+     * RPC; menos seguido deja huecos donde la transaccion puede caerse sin que
+     * nadie la vuelva a ofrecer.</p>
+     */
+    private static final int REBROADCAST_EVERY_POLLS = 4;
+
+    /**
+     * Unidades de computo reservadas por transaccion.
+     *
+     * <p>Las instrucciones de este programa consumen alrededor de 30 000. El
+     * valor por defecto que asume el planificador es 200 000 por instruccion,
+     * asi que declarar 60 000 no recorta nada real y reduce lo que hay que
+     * reservar, que es parte de lo que decide si la transaccion entra.</p>
+     */
+    private static final int COMPUTE_UNIT_LIMIT = 60_000;
+
+    /** Longitud de una firma ed25519, en bytes. */
+    private static final int SIGNATURE_BYTES = 64;
+
     private final SolanaClient solanaClient;
     private final ExpenseChainRepository expenseChainRepository;
     private final ExpenseChainRecordRepository expenseChainRecordRepository;
@@ -61,6 +91,18 @@ public class ExpenseSmartContractAdapter implements ExpenseSmartContractPort {
 
     @Value("${solana.program.id}")
     private String programId;
+
+    /**
+     * Precio por unidad de computo, en microlamports.
+     *
+     * <p>Es la comision de prioridad. Sin ella una transaccion compite en el
+     * ultimo lugar de la cola del lider y, cuando la red va cargada, se cae sin
+     * dejar rastro: el nodo la acepta, devuelve su firma y nadie la incluye.
+     * Configurable porque el valor que hace falta depende de la congestion del
+     * momento, y en devnet no es el mismo que en mainnet.</p>
+     */
+    @Value("${solana.priority-fee-micro-lamports:20000}")
+    private int priorityFeeMicroLamports;
 
     /**
      * Informa el saldo de la wallet. Nunca falla hacia afuera.
@@ -121,16 +163,18 @@ public class ExpenseSmartContractAdapter implements ExpenseSmartContractPort {
             // here so the domain layer only depends on ExpenseSmartContractPort.
             String latestBlockhash = latestBlockhash();
             Transaction transaction = new Transaction();
+            computeBudgetInstructions().forEach(transaction::addInstruction);
             transaction.addInstruction(createExpenseInstruction(
                     programPublicKey, authority, expensePda, expense, onChainName, amountMinorUnits, dueDateUnix));
-            transaction.setRecentBlockHash(latestBlockhash);
 
-            signature = sendTransaction(transaction, latestBlockhash);
-            System.out.println("Expense account created on Solana. pda=" + expensePda.toBase58()
-                    + ", signature=" + signature);
-            waitForSuccessfulSignature(signature);
+            // El aviso va despues de confirmar, no antes. Anunciar la creacion
+            // al recibir la firma afirmaba algo que todavia no era cierto, y
+            // cuando la transaccion se caia el log se contradecia a si mismo.
+            signature = sendAndConfirm(transaction, latestBlockhash);
+            LOGGER.info("Expense account created on Solana. pda={}, signature={}",
+                    expensePda.toBase58(), signature);
         } catch (Exception exception) {
-            System.out.println("Failed to create expense on Solana: " + exception.getMessage());
+            LOGGER.warn("Failed to create expense on Solana: {}", exception.getMessage());
             if (isAlreadyInUse(exception)) {
                 // Carrera entre la comprobacion y el envio: alguien creo la cuenta
                 // en el intervalo. Se adopta la que ya existe en vez de reintentar.
@@ -269,6 +313,7 @@ public class ExpenseSmartContractAdapter implements ExpenseSmartContractPort {
         try {
             String latestBlockhash = latestBlockhash();
             Transaction transaction = new Transaction();
+            computeBudgetInstructions().forEach(transaction::addInstruction);
             transaction.addInstruction(recordPaymentInstruction(
                     programPublicKey,
                     authority,
@@ -279,12 +324,10 @@ public class ExpenseSmartContractAdapter implements ExpenseSmartContractPort {
                     status,
                     confirmed
             ));
-            transaction.setRecentBlockHash(latestBlockhash);
 
-            signature = sendTransaction(transaction, latestBlockhash);
-            System.out.println("Payment recorded on Solana. pda=" + expensePda.toBase58()
-                    + ", paymentId=" + payment.getId() + ", signature=" + signature);
-            waitForSuccessfulSignature(signature);
+            signature = sendAndConfirm(transaction, latestBlockhash);
+            LOGGER.info("Payment recorded on Solana. pda={}, paymentId={}, signature={}",
+                    expensePda.toBase58(), payment.getId(), signature);
         } catch (Exception exception) {
             throw new RuntimeException("Failed to record payment on Solana: " + exception.getMessage(), exception);
         }
@@ -423,12 +466,128 @@ public class ExpenseSmartContractAdapter implements ExpenseSmartContractPort {
         );
     }
 
-    private String sendTransaction(Transaction transaction, String latestBlockhash) throws Exception {
-        return solanaClient.getRpcClient().getApi().sendTransaction(
-                transaction,
-                List.of(solanaClient.getSignerAccount()),
-                latestBlockhash
+    /**
+     * Firma, envia y espera la confirmacion, difundiendo mientras espera.
+     *
+     * <p>Reemplaza al par enviar-y-sondear anterior, que perdia transacciones en
+     * silencio. Que {@code sendTransaction} devuelva una firma solo significa
+     * que el nodo acepto el envio; no que la transaccion vaya a entrar en un
+     * bloque. Si el lider la descarta —por congestion, o porque llego sin
+     * comision de prioridad— nadie la vuelve a ofrecer, el sondeo agota sus
+     * noventa segundos y el gasto se queda sin anclar. Ese fue exactamente el
+     * caso del gasto 1: firma emitida, cuenta nunca creada, la red sin noticia
+     * de la transaccion.</p>
+     *
+     * <p>En Solana la difusion es responsabilidad del cliente. La transaccion se
+     * firma una vez y se reenvian <b>los mismos bytes</b> cada pocos segundos
+     * hasta que confirme o hasta que el blockhash caduque. Reenviar no duplica
+     * nada: la firma es la identidad de la transaccion, asi que la red descarta
+     * las copias de una que ya entro.</p>
+     *
+     * <p>El corte lo marca {@code isBlockhashValid}, no el reloj. Mientras el
+     * blockhash siga vivo la transaccion todavia puede entrar; cuando caduca ya
+     * no puede, y seguir esperando solo retrasa el reintento.</p>
+     */
+    private String sendAndConfirm(Transaction transaction, String latestBlockhash) throws Exception {
+        transaction.setRecentBlockHash(latestBlockhash);
+        transaction.sign(List.of(solanaClient.getSignerAccount()));
+
+        byte[] rawTransaction = transaction.serialize();
+        String encodedTransaction = Base64.getEncoder().encodeToString(rawTransaction);
+        String signature = signatureOf(rawTransaction);
+
+        var api = solanaClient.getRpcClient().getApi();
+
+        // El primer envio va con verificacion previa para que un error real del
+        // programa —cuenta ya creada, saldo insuficiente, datos invalidos— se
+        // sepa de inmediato y no despues de noventa segundos de espera.
+        api.sendRawTransaction(encodedTransaction, sendConfig(false));
+
+        long deadline = System.currentTimeMillis() + SIGNATURE_STATUS_TIMEOUT.toMillis();
+        int poll = 0;
+        while (System.currentTimeMillis() < deadline) {
+            Thread.sleep(SIGNATURE_STATUS_POLL_MILLIS);
+            poll++;
+
+            if (isSignatureConfirmed(signature)) {
+                return signature;
+            }
+
+            // Las difusiones posteriores saltan la verificacion previa: ya se
+            // hizo en el primer envio y repetirla en cada reenvio solo gasta
+            // cuota del RPC.
+            if (poll % REBROADCAST_EVERY_POLLS == 0) {
+                if (!api.isBlockhashValid(latestBlockhash)) {
+                    break;
+                }
+                api.sendRawTransaction(encodedTransaction, sendConfig(true));
+            }
+        }
+
+        // Una ultima comprobacion: la transaccion pudo entrar entre el ultimo
+        // sondeo y la salida del bucle.
+        if (isSignatureConfirmed(signature)) {
+            return signature;
+        }
+
+        throw new RuntimeException(
+                "La transaccion no llego a entrar en la cadena antes de que caducara el blockhash. signature="
+                        + signature);
+    }
+
+    /**
+     * Instrucciones de presupuesto de computo, primeras de cada transaccion.
+     *
+     * <p>Van siempre juntas. El limite sin el precio no prioriza nada, y el
+     * precio sin el limite se multiplica por el valor por defecto, que es tres
+     * veces lo que estas instrucciones consumen: se pagaria de mas por la misma
+     * prioridad.</p>
+     */
+    private List<TransactionInstruction> computeBudgetInstructions() {
+        return List.of(
+                ComputeBudgetProgram.setComputeUnitLimit(COMPUTE_UNIT_LIMIT),
+                ComputeBudgetProgram.setComputeUnitPrice(priorityFeeMicroLamports)
         );
+    }
+
+    private RpcSendTransactionConfig sendConfig(boolean skipPreflight) {
+        return RpcSendTransactionConfig.builder()
+                .encoding(RpcSendTransactionConfig.Encoding.base64)
+                .skipPreflight(skipPreflight)
+                // Que el propio nodo reenvie tambien, ademas de la difusion de
+                // este lado. Las dos cosas suman; ninguna sustituye a la otra.
+                .maxRetries(5)
+                .preflightCommitment("confirmed")
+                .build();
+    }
+
+    /**
+     * La firma de una transaccion serializada.
+     *
+     * <p>El formato empieza con la cantidad de firmas en compact-u16 —un solo
+     * byte mientras sean menos de 128, que siempre es el caso aqui— y sigue con
+     * las firmas. La primera es la de la transaccion.</p>
+     */
+    private static String signatureOf(byte[] rawTransaction) {
+        return Base58.encode(java.util.Arrays.copyOfRange(rawTransaction, 1, 1 + SIGNATURE_BYTES));
+    }
+
+    private boolean isSignatureConfirmed(String signature) throws Exception {
+        Map<String, Object> result = solanaClient.getRpcClient().call(
+                "getSignatureStatuses",
+                signatureStatusParams(signature),
+                Map.class
+        );
+        List<?> values = (List<?>) result.get("value");
+        if (values == null || values.isEmpty() || !(values.get(0) instanceof Map<?, ?> status)) {
+            return false;
+        }
+        Object error = status.get("err");
+        if (error != null) {
+            throw new RuntimeException("Solana transaction failed. signature=" + signature + ", err=" + error);
+        }
+        Object confirmationStatus = status.get("confirmationStatus");
+        return "confirmed".equals(confirmationStatus) || "finalized".equals(confirmationStatus);
     }
 
     /**
@@ -677,33 +836,6 @@ public class ExpenseSmartContractAdapter implements ExpenseSmartContractPort {
         @SuppressWarnings("unchecked")
         Map<String, Object> valueMap = (Map<String, Object>) blockhashResult.get("value");
         return (String) valueMap.get("blockhash");
-    }
-
-    private void waitForSuccessfulSignature(String signature) throws Exception {
-        // sendTransaction returning a signature only means the cluster accepted
-        // the transaction. Poll until it is confirmed/finalized so the database
-        // record reflects an on-chain operation that really landed.
-        long deadline = System.currentTimeMillis() + SIGNATURE_STATUS_TIMEOUT.toMillis();
-        while (System.currentTimeMillis() < deadline) {
-            Map<String, Object> result = solanaClient.getRpcClient().call(
-                    "getSignatureStatuses",
-                    signatureStatusParams(signature),
-                    Map.class
-            );
-            List<?> values = (List<?>) result.get("value");
-            if (values != null && !values.isEmpty() && values.get(0) instanceof Map<?, ?> status) {
-                Object error = status.get("err");
-                if (error != null) {
-                    throw new RuntimeException("Solana transaction failed. signature=" + signature + ", err=" + error);
-                }
-                Object confirmationStatus = status.get("confirmationStatus");
-                if ("confirmed".equals(confirmationStatus) || "finalized".equals(confirmationStatus)) {
-                    return;
-                }
-            }
-            Thread.sleep(SIGNATURE_STATUS_POLL_MILLIS);
-        }
-        throw new RuntimeException("Timed out waiting for Solana confirmation. signature=" + signature);
     }
 
     private List<Object> signatureStatusParams(String signature) {

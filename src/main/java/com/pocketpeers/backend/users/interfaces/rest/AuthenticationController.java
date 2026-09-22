@@ -3,6 +3,10 @@ package com.pocketpeers.backend.users.interfaces.rest;
 import com.pocketpeers.backend.users.domain.model.commands.ChangePasswordCommand;
 import com.pocketpeers.backend.users.domain.model.commands.ConfirmPasswordResetCommand;
 import com.pocketpeers.backend.users.domain.model.commands.RequestPasswordResetCommand;
+import com.pocketpeers.backend.users.domain.model.commands.RequestSignUpCommand;
+import com.pocketpeers.backend.users.domain.model.commands.ConfirmSignUpCommand;
+import com.pocketpeers.backend.users.interfaces.rest.resources.ConfirmSignUpResource;
+import com.pocketpeers.backend.users.interfaces.rest.resources.SignUpRequestedResource;
 import com.pocketpeers.backend.users.domain.services.UserCommandService;
 import com.pocketpeers.backend.users.interfaces.rest.resources.AuthenticatedUserResource;
 import com.pocketpeers.backend.users.interfaces.rest.resources.ChangePasswordResource;
@@ -66,6 +70,48 @@ public class AuthenticationController {
         var userResource = UserResourceFromEntityAssembler.toResourceFromEntity(user.get());
         return new ResponseEntity<>(userResource, HttpStatus.CREATED);
 
+    }
+
+    /**
+     * Primer paso del alta: pide el codigo que verifica el correo.
+     *
+     * <p>No crea la cuenta. Guarda los datos en espera y manda un codigo de seis
+     * digitos a la direccion indicada; la cuenta nace en
+     * {@code /sign-up/confirm}, no aqui.</p>
+     *
+     * <p>Aqui si se responde distinto cuando el usuario o el correo ya existen,
+     * al reves que en la recuperacion de contrasena: un formulario de alta tiene
+     * que poder decir que ese nombre esta tomado, o la persona no puede
+     * terminar de registrarse.</p>
+     */
+    @Operation(summary = "Solicitar codigo de verificacion de correo",
+            description = "Guarda el alta en espera y envia un codigo de 6 digitos. No crea la cuenta.")
+    @PostMapping("/sign-up/request")
+    public ResponseEntity<SignUpRequestedResource> requestSignUp(@RequestBody SignUpResource resource) {
+        var verificationRequired = userCommandService.handle(new RequestSignUpCommand(
+                resource.username(), resource.password(), resource.firstName(), resource.lastName(),
+                resource.phoneNumber(), resource.photo(), resource.email(),
+                resource.documentType(), resource.documentNumber()));
+        return ResponseEntity.ok(new SignUpRequestedResource(
+                verificationRequired,
+                verificationRequired
+                        ? "Te enviamos un codigo a tu correo para terminar de crear tu cuenta."
+                        : "Tu cuenta fue creada."));
+    }
+
+    /**
+     * Segundo paso del alta: canjea el codigo y crea la cuenta.
+     */
+    @Operation(summary = "Confirmar correo y crear la cuenta",
+            description = "Valida el codigo enviado por correo y recien entonces registra al usuario.")
+    @PostMapping("/sign-up/confirm")
+    public ResponseEntity<UserResource> confirmSignUp(@RequestBody ConfirmSignUpResource resource) {
+        var user = userCommandService.handle(new ConfirmSignUpCommand(resource.email(), resource.code()));
+        if (user.isEmpty()) {
+            return ResponseEntity.badRequest().build();
+        }
+        return new ResponseEntity<>(
+                UserResourceFromEntityAssembler.toResourceFromEntity(user.get()), HttpStatus.CREATED);
     }
 
     /**

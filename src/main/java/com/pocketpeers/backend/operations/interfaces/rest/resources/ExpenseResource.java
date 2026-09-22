@@ -17,6 +17,13 @@ public record ExpenseResource(Long id,
                               String status,
                               Integer active,
                               String blockchainHash,
+                              /*
+                               * Cuando el gasto quedo escrito en la cadena.
+                               * Acompaña a blockchainHash porque los dos salen
+                               * del mismo eslabon: un hash sin su instante no
+                               * dice a que momento corresponde la prueba.
+                               */
+                              java.util.Date anchoredAt,
                               java.util.Date createdAt,
                               java.util.Date updatedAt) {
 }

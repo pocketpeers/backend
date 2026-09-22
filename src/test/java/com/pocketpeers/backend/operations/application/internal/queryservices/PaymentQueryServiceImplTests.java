@@ -70,12 +70,14 @@ class PaymentQueryServiceImplTests {
 
     @Test
     void incomingPaymentsRequireExistingUserAndFilterActiveExpenses() {
-        User user = new User("admin", "secret");
+        // El cobro ya no depende del rol en el grupo sino de haber creado el
+        // gasto, asi que la consulta solo necesita el id del usuario.
+        User user = new User("creador", "secret");
         ReflectionTestUtils.setField(user, "id", 1L);
         Payment active = paymentWithExpense(expense());
         Payment cancelled = paymentWithExpense(expense().cancel());
         when(userRepository.findById(1L)).thenReturn(Optional.of(user));
-        when(paymentRepository.findIncomingPaymentsByUser(1L, GroupRole.ADMIN)).thenReturn(List.of(active, cancelled));
+        when(paymentRepository.findIncomingPaymentsByUser(1L)).thenReturn(List.of(active, cancelled));
 
         assertThat(service.handle(new GetIncomingPaymentsByUserIdQuery(1L))).containsExactly(active);
     }

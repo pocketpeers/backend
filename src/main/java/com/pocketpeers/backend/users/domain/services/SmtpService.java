@@ -44,14 +44,41 @@ public class SmtpService {
     @Value("${app.mail.display-name:PocketPeers}")
     private String senderDisplayName;
 
+    /**
+     * Da la bienvenida a quien acaba de completar su registro.
+     *
+     * <p>Llega despues de confirmar el codigo, no antes: hasta ese momento la
+     * cuenta no existe y felicitar a alguien por algo que todavia no ocurrio
+     * solo confunde.</p>
+     */
     public void sendWelcomeEmail(String to, String name) throws MessagingException {
         MimeMessage message = emailSender.createMimeMessage();
         MimeMessageHelper helper = new MimeMessageHelper(message, true, MAIL_ENCODING);
         applySender(helper);
         helper.setTo(to);
-        helper.setSubject("¡Bienvenido a Pockets Partner!");
-        helper.setText(buildHtmlMessage(name), true);
+        helper.setSubject("¡Bienvenido a PocketPeers, " + name + "!");
+        helper.setText(buildWelcomeMessage(name), true);
         emailSender.send(message);
+    }
+
+    /**
+     * Envia la bienvenida en segundo plano.
+     *
+     * <p>Aqui importa mas que en los otros dos correos: este sale justo despues
+     * de crear la cuenta, dentro de la misma peticion que devuelve el alta. Si
+     * se esperara al servidor de correo, un Gmail lento retrasaria el registro;
+     * y si fallara, tumbaria la respuesta de una cuenta que si se creo. Un
+     * correo de cortesia nunca debe poder estropear eso.</p>
+     */
+    @Async
+    public void sendWelcomeEmailAsync(String to, String name) {
+        try {
+            sendWelcomeEmail(to, name);
+            LOGGER.info("Welcome email sent to {}", mask(to));
+        } catch (Exception exception) {
+            LOGGER.error("Could not send welcome email to {}. cause={}",
+                    mask(to), exception.getMessage(), exception);
+        }
     }
 
     /**
@@ -117,6 +144,71 @@ public class SmtpService {
         }
     }
 
+    /**
+     * Envia el codigo que verifica el correo de un alta.
+     *
+     * <p>A diferencia del de recuperacion, este llega a alguien que todavia no
+     * tiene cuenta. Por eso dice de forma explicita que, si no se registro,
+     * puede ignorarlo: no se ha creado nada a su nombre y sin el codigo nadie
+     * podra crearlo.</p>
+     */
+    public void sendSignUpVerificationEmail(String to, String name, String code) throws MessagingException {
+        MimeMessage message = emailSender.createMimeMessage();
+        MimeMessageHelper helper = new MimeMessageHelper(message, true, MAIL_ENCODING);
+        applySender(helper);
+        helper.setTo(to);
+        helper.setSubject("Confirma tu correo en PocketPeers");
+        helper.setText(buildSignUpVerificationMessage(name, code), true);
+        emailSender.send(message);
+    }
+
+    /**
+     * Envia el codigo de verificacion en segundo plano.
+     *
+     * <p>Mismo motivo que en la recuperacion: la respuesta del endpoint no
+     * depende de que el correo salga, asi que esperar al servidor de correo solo
+     * dejaria la pantalla girando. Va en esta clase porque {@code @Async} solo
+     * surte efecto cuando la llamada cruza el proxy de Spring.</p>
+     */
+    @Async
+    public void sendSignUpVerificationEmailAsync(String to, String name, String code) {
+        try {
+            sendSignUpVerificationEmail(to, name, code);
+            LOGGER.info("Sign-up verification email sent to {}", mask(to));
+        } catch (Exception exception) {
+            LOGGER.error("Could not send sign-up verification email to {}. cause={}",
+                    mask(to), exception.getMessage(), exception);
+        }
+    }
+
+    private String buildSignUpVerificationMessage(String name, String code) {
+        return "<html>" +
+                "<body style='font-family: Arial, sans-serif; background:#F4F7F8; padding:24px;'>" +
+                "<div style='max-width:520px; margin:auto; background:#ffffff; border:1px solid #D8E1E7;" +
+                " border-radius:8px; padding:28px;'>" +
+                "<h2 style='color:#0B2545; margin:0 0 12px;'>Hola " + name + ",</h2>" +
+                "<p style='color:#334; line-height:1.6; margin:0 0 20px;'>" +
+                "Gracias por registrarte en PocketPeers. Para terminar de crear tu cuenta, " +
+                "ingresa este código en la aplicación:</p>" +
+                "<div style='text-align:center; margin:24px 0;'>" +
+                "<span style='display:inline-block; font-size:34px; font-weight:bold; letter-spacing:10px;" +
+                " color:#134074; background:#F4F7F8; border:1px solid #D8E1E7; border-radius:8px;" +
+                " padding:16px 24px;'>" + code + "</span>" +
+                "</div>" +
+                "<p style='color:#556; line-height:1.6; margin:0 0 8px;'>" +
+                "El código vence en " +
+                com.pocketpeers.backend.users.domain.model.entities.PendingRegistration.EXPIRATION_MINUTES +
+                " minutos y solo se puede usar una vez.</p>" +
+                "<p style='color:#556; line-height:1.6; margin:16px 0 0;'>" +
+                "<strong>Si no te registraste</strong>, puedes ignorar este correo: no se ha creado " +
+                "ninguna cuenta con tu dirección y sin este código nadie podrá crearla.</p>" +
+                "<hr style='border:0; border-top:1px solid #D8E1E7; margin:24px 0;'>" +
+                "<p style='font-size:12px; color:#8a97a0; margin:0;'>Equipo de PocketPeers</p>" +
+                "</div>" +
+                "</body>" +
+                "</html>";
+    }
+
     /** Oculta el correo en los logs: no hace falta guardarlo entero para diagnosticar. */
     private static String mask(String email) {
         if (email == null) {
@@ -157,21 +249,90 @@ public class SmtpService {
                 "</html>";
     }
 
-    private String buildHtmlMessage(String name) {
+    /**
+     * El correo de bienvenida.
+     *
+     * <p>Reemplaza a uno anterior que hablaba de "Pockets Partner" —el nombre
+     * viejo del proyecto—, usaba una paleta que no es la de la aplicacion y no
+     * decia nada concreto: "explora nuestra plataforma y aprovecha todas las
+     * oportunidades" no le dice a nadie que puede hacer. Ademas no lo enviaba
+     * nadie: el metodo existia sin que ninguna ruta lo llamara.</p>
+     *
+     * <p>Esta version esta escrita para quien va a usar esto de verdad: alguien
+     * que lleva sus juntas en un cuaderno y quiza nunca instalo una aplicacion
+     * de dinero. De ahi las tres decisiones de redaccion:</p>
+     *
+     * <ul>
+     *   <li><b>Cuatro pasos y se acaba.</b> Una lista larga en un correo de
+     *       bienvenida no se lee; se cierra.</li>
+     *   <li><b>Ni una palabra tecnica.</b> No dice "blockchain" ni "anclaje":
+     *       dice que queda anotado donde nadie lo puede cambiar, que es lo que
+     *       de verdad significa para quien lo lee. Tampoco dice "registro
+     *       publico", aunque la cadena lo sea: quien lee eso entiende que sus
+     *       cuentas se ven desde fuera, y lo unico que viaja a la cadena son
+     *       huellas criptograficas. Una palabra exacta que se malinterpreta es
+     *       peor que una aproximada que se entiende.</li>
+     *   <li><b>Termina con una sola accion.</b> Crear el primer grupo. Un
+     *       correo que sugiere cinco cosas a la vez no consigue ninguna.</li>
+     * </ul>
+     */
+    private String buildWelcomeMessage(String name) {
         return "<html>" +
-                "<body style='font-family: Arial, sans-serif;'>" +
-                "<div style='max-width: 600px; margin: auto; border: 1px solid #ddd; border-radius: 5px; padding: 20px;'>" +
-                "<h1 style='color: #c682ff;'>Hola " + name + ",</h1>" +
-                "<p>¡Bienvenido a <strong>Pockets Partner</strong>!</p>" +
-                "<p>Nos alegra tenerte con nosotros. Explora nuestra plataforma y aprovecha todas las oportunidades que ofrecemos.</p>" +
-                "<p style='font-weight: bold;'>¡Saludos!</p>" +
-                "<p>El equipo de Pockets Partner</p>" +
-                "<footer style='margin-top: 20px;'>" +
-                "<p style='font-size: 12px; color: #aaa;'>Si tienes alguna pregunta, no dudes en contactarnos.</p>" +
-                "</footer>" +
+                "<body style='font-family: Arial, sans-serif; background:#F4F7F8; padding:24px;'>" +
+                "<div style='max-width:520px; margin:auto; background:#ffffff; border:1px solid #D8E1E7;" +
+                " border-radius:8px; padding:28px;'>" +
+
+                "<h2 style='color:#0B2545; margin:0 0 12px;'>¡Hola " + name + "! Tu cuenta ya está lista</h2>" +
+
+                "<p style='color:#334; line-height:1.6; margin:0 0 20px;'>" +
+                "PocketPeers te ayuda a llevar la cuenta de los gastos que compartes con tu junta, " +
+                "tu familia o tus compañeros de trabajo. Sin cuadernos y sin discutir quién puso qué.</p>" +
+
+                "<p style='color:#0B2545; font-weight:bold; margin:0 0 12px;'>Esto es lo que puedes hacer:</p>" +
+
+                welcomeStep("1", "Arma tu grupo",
+                        "Invita a las personas con las que compartes gastos. Cada una entra desde su propio celular.") +
+                welcomeStep("2", "Anota los gastos",
+                        "Registra cuánto fue y entre quiénes se reparte. Si le tomas foto al recibo, la aplicación lee el monto sola.") +
+                welcomeStep("3", "Registra tus pagos",
+                        "Paga todo de una vez o de a pocos. Quien puso el dinero confirma que lo recibió, y queda anotado.") +
+                welcomeStep("4", "Construye tu historial",
+                        "Cada pago que cumples a tiempo suma a tu puntaje, y queda guardado de una forma que nadie puede modificar después. Ni nosotros.") +
+
+                "<div style='background:#F4F7F8; border-left:4px solid #134074; padding:14px 16px; margin:24px 0;'>" +
+                "<p style='color:#334; line-height:1.6; margin:0;'>" +
+                "Ese último punto es el que más importa: si algún día necesitas demostrarle a alguien " +
+                "que cumples con tus pagos, vas a tener con qué.</p>" +
+                "</div>" +
+
+                "<p style='color:#334; line-height:1.6; margin:0 0 4px;'>" +
+                "<strong>¿Por dónde empiezo?</strong> Abre la aplicación y crea tu primer grupo. " +
+                "Toma menos de un minuto.</p>" +
+
+                "<hr style='border:0; border-top:1px solid #D8E1E7; margin:24px 0;'>" +
+                "<p style='font-size:12px; color:#8a97a0; margin:0;'>" +
+                "PocketPeers no guarda tu dinero ni te presta: solo lleva la cuenta de los acuerdos " +
+                "que ya tienes con tu gente.</p>" +
+                "<p style='font-size:12px; color:#8a97a0; margin:8px 0 0;'>Equipo de PocketPeers</p>" +
                 "</div>" +
                 "</body>" +
                 "</html>";
+    }
+
+    /** Un paso de la lista de bienvenida, con su numero en un circulo. */
+    private String welcomeStep(String number, String title, String description) {
+        return "<table role='presentation' cellpadding='0' cellspacing='0' style='margin:0 0 16px; width:100%;'>" +
+                "<tr>" +
+                "<td style='width:34px; vertical-align:top;'>" +
+                "<div style='width:26px; height:26px; border-radius:13px; background:#134074; color:#ffffff;" +
+                " text-align:center; line-height:26px; font-weight:bold; font-size:14px;'>" + number + "</div>" +
+                "</td>" +
+                "<td style='vertical-align:top;'>" +
+                "<p style='color:#0B2545; font-weight:bold; margin:0 0 2px;'>" + title + "</p>" +
+                "<p style='color:#556; line-height:1.5; margin:0; font-size:14px;'>" + description + "</p>" +
+                "</td>" +
+                "</tr>" +
+                "</table>";
     }
 
 

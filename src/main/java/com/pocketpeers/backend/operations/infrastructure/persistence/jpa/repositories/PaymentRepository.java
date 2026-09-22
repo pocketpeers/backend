@@ -111,17 +111,24 @@ public interface PaymentRepository extends JpaRepository<Payment, Long> {
                                            @Param("endDate") LocalDate endDate);
 
     /**
-     * Obtiene pagos de gastos donde el usuario es administrador del grupo relacionado.
+     * Cobros del usuario: pagos de gastos que el creo y que le debe otra persona.
+     *
+     * <p>Antes preguntaba por el rol de administrador del grupo, y eso
+     * funcionaba solo mientras el administrador fuera el unico capaz de crear
+     * gastos. Desde que cualquier miembro puede crearlos, la consulta fallaba
+     * en los dos sentidos: al miembro que crea un gasto no le mostraba lo que
+     * le deben, y al administrador le mostraba como cobros suyos los pagos de
+     * gastos creados por otros. Quien cobra es el creador del gasto, que es
+     * ademas el unico que puede confirmar esos pagos.</p>
      */
     @Query("""
-    SELECT p 
-    FROM Payment p 
-    JOIN p.expense e 
-    JOIN e.group g 
-    JOIN GroupMember gm ON gm.group.id = g.id 
-    WHERE gm.user.id = :user 
+    SELECT p
+    FROM Payment p
+    JOIN p.expense e
+    WHERE e.user.id = :user
       AND (e.active IS NULL OR e.active = 1)
-      AND gm.role = :role AND p.user.id != :user
-""")    List<Payment> findIncomingPaymentsByUser(@Param("user") Long user, @Param("role") GroupRole role);
+      AND p.user.id != :user
+""")
+    List<Payment> findIncomingPaymentsByUser(@Param("user") Long user);
 
 }

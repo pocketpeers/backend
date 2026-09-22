@@ -5,6 +5,7 @@ import com.pocketpeers.backend.operations.domain.model.commands.DeleteExpenseCom
 import com.pocketpeers.backend.operations.domain.model.commands.CreatePaymentCommand;
 import com.pocketpeers.backend.operations.domain.model.queries.GetAllExpensesByGroupIdQuery;
 import com.pocketpeers.backend.operations.domain.model.queries.GetAllExpensesByUserIdQuery;
+import com.pocketpeers.backend.operations.domain.model.queries.GetExpensesWhereUserParticipatesQuery;
 import com.pocketpeers.backend.operations.domain.model.queries.GetAllExpensesQuery;
 import com.pocketpeers.backend.operations.domain.model.queries.GetExpenseByIdQuery;
 import com.pocketpeers.backend.operations.domain.model.queries.GetPaymentByIdQuery;
@@ -26,6 +27,7 @@ import com.pocketpeers.backend.operations.interfaces.rest.transform.PaymentResou
 import com.pocketpeers.backend.operations.interfaces.rest.transform.UpdateExpenseCommandFromResourceAssembler;
 import com.pocketpeers.backend.users.domain.model.aggregates.User;
 import com.pocketpeers.backend.users.infrastructure.persistence.jpa.repositories.UserRepository;
+import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.transaction.Transactional;
 import org.springframework.http.HttpStatus;
@@ -153,6 +155,28 @@ public class ExpensesController {
         return ResponseEntity.ok(expenseResources);
     }
 
+    /**
+     * Gastos en los que el usuario participa: los que creo y aquellos donde le
+     * toca pagar.
+     *
+     * <p>Existe porque {@code /userId/{id}} devuelve solo los creados, y con eso
+     * el panel no podia saber cuando vence una cuota que le asignaron en un
+     * gasto ajeno: el pago llegaba, el gasto no, y la fecha de vencimiento vive
+     * en el gasto. "Vence pronto" descartaba esos pagos sin avisar.</p>
+     *
+     * <p>Devuelve un superconjunto del anterior, asi que el cliente puede sacar
+     * de aqui tambien los propios y ahorrarse una peticion.</p>
+     */
+    @Operation(summary = "Get expenses where the user participates",
+            description = "Los que creo y aquellos en los que tiene un pago asignado.")
+    @GetMapping("/participant/{userId}")
+    public ResponseEntity<List<ExpenseResource>> getExpensesWhereUserParticipates(@PathVariable Long userId) {
+        var query = new GetExpensesWhereUserParticipatesQuery(userId);
+        var expenses = expenseQueryService.handle(query);
+        var expenseResources = expenses.stream().map(this::toExpenseResource).toList();
+        return ResponseEntity.ok(expenseResources);
+    }
+
     @GetMapping
     public ResponseEntity<List<ExpenseResource>> getAllExpenses() {
         var getAllExpensesQuery = new GetAllExpensesQuery();
@@ -169,8 +193,11 @@ public class ExpensesController {
     }
 
     @PutMapping("/{expenseId}")
-    public ResponseEntity<ExpenseResource> updateExpense(@PathVariable Long expenseId, @RequestBody UpdateExpenseResource updateExpenseResource) {
-        var updateExpenseCommand = UpdateExpenseCommandFromResourceAssembler.toCommandFromResource(expenseId, updateExpenseResource);
+    public ResponseEntity<ExpenseResource> updateExpense(@PathVariable Long expenseId,
+                                                         @RequestBody UpdateExpenseResource updateExpenseResource,
+                                                         Authentication authentication) {
+        var updateExpenseCommand = UpdateExpenseCommandFromResourceAssembler.toCommandFromResource(
+                expenseId, updateExpenseResource, authentication.getName());
         var updatedExpense = expenseCommandService.handle(updateExpenseCommand);
         if(updatedExpense.isEmpty()) return ResponseEntity.badRequest().build();
         var expenseResource = toExpenseResource(updatedExpense.get());
@@ -210,17 +237,25 @@ public class ExpensesController {
     }
 
     private ExpenseResource toExpenseResource(com.pocketpeers.backend.operations.domain.model.aggregates.Expense expense) {
+        var record = expenseChainRecordRepository
+                .findFirstByChain_Expense_IdAndPaymentIsNullOrderByCreatedAtDesc(expense.getId());
         return ExpenseResourceFromEntityAssembler.toResourceFromEntity(
                 expense,
-                expenseBlockchainHash(expense.getId())
+                record.map(chainRecord -> chainRecord.getTransactionHash().hash()).orElse(""),
+                record.map(chainRecord -> chainRecord.getCreatedAt()).orElse(null)
         );
     }
 
     private PaymentResource toPaymentResource(com.pocketpeers.backend.operations.domain.model.aggregates.Payment payment) {
+        // Un solo viaje a la base: el hash y el instante del anclaje salen del
+        // mismo eslabon.
+        var record = expenseChainRecordRepository
+                .findFirstByPayment_IdOrderByRecordIndexDesc(payment.getId());
         return PaymentResourceFromEntityAssembler.toResourceFromEntity(
                 payment,
                 false,
-                paymentBlockchainHash(payment.getId())
+                record.map(chainRecord -> chainRecord.getTransactionHash().hash()).orElse(""),
+                record.map(chainRecord -> chainRecord.getCreatedAt()).orElse(null)
         );
     }
 

@@ -9,6 +9,16 @@ public class ExpenseResourceFromEntityAssembler {
     }
 
     public static ExpenseResource toResourceFromEntity(Expense expense, String blockchainHash){
+        return toResourceFromEntity(expense, blockchainHash, null);
+    }
+
+    /**
+     * @param anchoredAt instante en que el gasto quedo escrito en la cadena.
+     *                   Nulo mientras no lo este, igual que el hash.
+     */
+    public static ExpenseResource toResourceFromEntity(Expense expense,
+                                                       String blockchainHash,
+                                                       java.util.Date anchoredAt){
         return new ExpenseResource(
                 expense.getId(),
                 expense.getName(),
@@ -21,6 +31,7 @@ public class ExpenseResourceFromEntityAssembler {
                 expense.getStatus(),
                 expense.getActive(),
                 blockchainHash,
+                anchoredAt,
                 expense.getCreatedAt(),
                 expense.getUpdatedAt());
     }

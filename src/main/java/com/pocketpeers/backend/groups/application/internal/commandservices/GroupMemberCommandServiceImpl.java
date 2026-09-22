@@ -61,6 +61,17 @@ public class GroupMemberCommandServiceImpl implements GroupMemberCommandService 
         var memberToRemove = groupMemberRepository.findByGroupIdAndUser_Id(group.getId(), command.userId())
                 .orElseThrow(() -> new RuntimeException("Member not found in group"));
 
+        // Al administrador no se le saca del grupo. No es una regla de permisos
+        // sino una invariante: el grupo resuelve quien lo administra buscando al
+        // miembro con ese rol, y si no encuentra ninguno devuelve null. Un grupo
+        // sin administrador queda inservible y sin salida, porque editarlo,
+        // invitar, ver morosos y hasta eliminarlo exigen ser el administrador
+        // que ya no existe. Como no hay forma de transferir el rol, la unica
+        // defensa es impedir que se quede vacio.
+        if (memberToRemove.isAdmin()) {
+            throw new IllegalArgumentException("No se puede quitar al administrador del grupo");
+        }
+
         try {
             groupMemberRepository.delete(memberToRemove);
         } catch (Exception e) {

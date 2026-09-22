@@ -1,7 +1,5 @@
 package com.pocketpeers.backend.operations.interfaces.rest;
 
-import com.pocketpeers.backend.groups.domain.model.valueobjects.GroupRole;
-import com.pocketpeers.backend.groups.infrastructure.persistence.jpa.repositories.GroupMemberRepository;
 import com.pocketpeers.backend.operations.domain.model.aggregates.Payment;
 import com.pocketpeers.backend.operations.domain.model.commands.ConfirmPaymentCommand;
 import com.pocketpeers.backend.operations.domain.model.queries.*;
@@ -35,16 +33,14 @@ public class PaymentController {
     private final PaymentQueryService paymentQueryService;
     private final PaymentCommandService paymentCommandService;
     private final UserRepository userRepository;
-    private final GroupMemberRepository groupMemberRepository;
     private final ExpenseChainRecordRepository expenseChainRecordRepository;
 
     public PaymentController(PaymentQueryService paymentQueryService, PaymentCommandService paymentCommandService,
-                             UserRepository userRepository, GroupMemberRepository groupMemberRepository,
+                             UserRepository userRepository,
                              ExpenseChainRecordRepository expenseChainRecordRepository) {
         this.paymentQueryService = paymentQueryService;
         this.paymentCommandService = paymentCommandService;
         this.userRepository = userRepository;
-        this.groupMemberRepository = groupMemberRepository;
         this.expenseChainRecordRepository = expenseChainRecordRepository;
     }
 
@@ -117,10 +113,13 @@ public class PaymentController {
     public ResponseEntity<PaymentResource> getPaymentById(@PathVariable Long paymentId, Authentication authentication) {
         var getPaymentByIdQuery = new GetPaymentByIdQuery(paymentId);
         var payment = paymentQueryService.handle(getPaymentByIdQuery);
+        var record = expenseChainRecordRepository
+                .findFirstByPayment_IdOrderByRecordIndexDesc(payment.get().getId());
         var paymentResource = PaymentResourceFromEntityAssembler.toResourceFromEntity(
                 payment.get(),
                 canViewEvidence(payment.get(), authentication),
-                paymentBlockchainHash(payment.get().getId())
+                record.map(chainRecord -> chainRecord.getTransactionHash().hash()).orElse(""),
+                record.map(chainRecord -> chainRecord.getCreatedAt()).orElse(null)
         );
         return ResponseEntity.ok(paymentResource);
     }
@@ -141,32 +140,41 @@ public class PaymentController {
         return ResponseEntity.ok(paymentResources);
     }
 
+    /**
+     * Quien puede ver la evidencia de un pago: las dos partes, y nadie mas.
+     *
+     * <p>El deudor, porque es suya, y el acreedor, porque tiene que revisarla
+     * antes de confirmar el pago. Son los dos que participan en esa obligacion
+     * concreta.</p>
+     *
+     * <p>Antes tambien la veia el administrador del grupo, cualquiera que fuera
+     * el pago. Eso le daba acceso a las fotos de comprobante de todos sus
+     * integrantes —transferencias, numeros de cuenta, montos ajenos a el— sin
+     * ser parte de ninguna de esas operaciones. Administrar un grupo es poder
+     * editarlo y avisar a los morosos, no mirar los recibos de los demas; y en
+     * un estudio de campo esa diferencia es justo la que sostiene lo que la
+     * memoria promete sobre el tratamiento de los datos.</p>
+     */
     private boolean canViewEvidence(Payment payment, Authentication authentication) {
         if (authentication == null || authentication.getName() == null) return false;
         return userRepository.findByUsername(authentication.getName())
                 .map(user -> payment.getUser().getId().equals(user.getId())
-                        || payment.getExpense().getUser().getId().equals(user.getId())
-                        || groupMemberRepository.findByGroupIdAndUser_Id(
-                                payment.getExpense().getGroup().getId(),
-                                user.getId()
-                        )
-                        .map(member -> member.getRole() == GroupRole.ADMIN)
-                        .orElse(false))
+                        || payment.getExpense().getUser().getId().equals(user.getId()))
                 .orElse(false);
     }
 
     private PaymentResource toPaymentResource(Payment payment) {
+        // El eslabon se busca una sola vez y se sacan de el las dos cosas. Antes
+        // solo se leia el hash; pedir ahora la marca de tiempo con una segunda
+        // consulta duplicaria el viaje a la base para leer la misma fila.
+        var record = expenseChainRecordRepository
+                .findFirstByPayment_IdOrderByRecordIndexDesc(payment.getId());
+
         return PaymentResourceFromEntityAssembler.toResourceFromEntity(
                 payment,
                 false,
-                paymentBlockchainHash(payment.getId())
+                record.map(chainRecord -> chainRecord.getTransactionHash().hash()).orElse(""),
+                record.map(chainRecord -> chainRecord.getCreatedAt()).orElse(null)
         );
-    }
-
-    private String paymentBlockchainHash(Long paymentId) {
-        return expenseChainRecordRepository
-                .findFirstByPayment_IdOrderByRecordIndexDesc(paymentId)
-                .map(record -> record.getTransactionHash().hash())
-                .orElse("");
     }
 }

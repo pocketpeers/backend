@@ -34,6 +34,12 @@ public class ExpenseQueryServiceImpl implements ExpenseQueryService {
     }
 
     @Override
+    public List<Expense> handle(GetExpensesWhereUserParticipatesQuery query) {
+        // El filtro de activos ya va en la consulta, asi que aqui no se repite.
+        return expenseRepository.findWhereUserParticipates(query.userId());
+    }
+
+    @Override
     public Optional<Expense> handle(GetExpenseByNameAndUserIdQuery query){
         return expenseRepository.findByNameAndUser_Id(query.expenseName(), query.userId());
     }

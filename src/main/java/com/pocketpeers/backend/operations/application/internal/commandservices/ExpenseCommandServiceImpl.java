@@ -53,11 +53,17 @@ public class ExpenseCommandServiceImpl implements ExpenseCommandService {
         if (group.isEmpty()) {
             throw new IllegalArgumentException("Group not found");
         }
-        var groupMember = groupMemberRepository.findByGroupIdAndUser_Id(command.groupId(), command.userId())
+        // Basta con pertenecer al grupo. Antes se exigia ser administrador, y
+        // eso contradecia el proposito del sistema: la evidencia de reputacion
+        // se registra contra el deudor, con el creador del gasto como
+        // contraparte. Con un unico creador, el organizador de una junta se
+        // quedaba sin historial —su cuota en su propio gasto se descarta por
+        // autocontraparte— justo siendo quien mas necesita acreditarlo, y los
+        // demas miembros compartian una sola contraparte, cuya evidencia esta
+        // ademas limitada por `counterpartyCap`. Quien crea el gasto sigue
+        // siendo su unico acreedor: es quien lo confirma y quien lo anula.
+        groupMemberRepository.findByGroupIdAndUser_Id(command.groupId(), command.userId())
                 .orElseThrow(() -> new IllegalArgumentException("User is not a member of the group"));
-        if (groupMember.getRole() != GroupRole.ADMIN) {
-            throw new IllegalArgumentException("Only group admins can create expenses");
-        }
         Expense expense = new Expense(command.name(), command.amount(), user.get(), group.get(), command.dueDate());
         expenseRepository.save(expense);
 
@@ -71,6 +77,16 @@ public class ExpenseCommandServiceImpl implements ExpenseCommandService {
         var result = expenseRepository.findById(command.id());
         if (result.isEmpty()) {throw new IllegalArgumentException("Expense not found");}
         var expenseToUpdate = result.get();
+        // Mismo criterio que anular y que confirmar: manda el creador, que es
+        // el acreedor. Antes este metodo no comprobaba nada, de modo que
+        // cualquier usuario autenticado podia cambiarle a otro el monto o la
+        // fecha de vencimiento de una obligacion. No era solo un permiso de
+        // mas: mover el vencimiento decide si un pago cuenta como puntual o
+        // como vencido, y con ello el score; y cambiar el monto deja los
+        // terminos del gasto distintos de los que se anclaron en la cadena.
+        if (!expenseToUpdate.getUser().getUsername().equals(command.username())) {
+            throw new IllegalArgumentException("Only the expense creator can update it");
+        }
         try {
             var updateExpense = expenseRepository.save(expenseToUpdate.UpdateInformation(command.name(), command.amount(), command.dueDate()));
             return Optional.of(updateExpense);

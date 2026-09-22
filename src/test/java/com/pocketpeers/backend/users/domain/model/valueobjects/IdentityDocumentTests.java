@@ -46,6 +46,28 @@ class IdentityDocumentTests {
     }
 
     /**
+     * El carne de extranjeria es estrictamente numerico, de nueve o diez digitos.
+     *
+     * <p>Antes admitia de 8 a 12 caracteres alfanumericos, y con eso pasaban
+     * numeros que no existen. La prueba fija el rango por los dos extremos y
+     * tambien por el alfabeto, que es donde se aflojaria sin querer: un rango
+     * comprobado solo por arriba vuelve a aceptar ocho digitos en cuanto
+     * alguien toque la expresion.</p>
+     */
+    @Test
+    void foreignCardAcceptsOnlyNineOrTenDigits() {
+        assertThat(IdentityDocument.of("CE", "001234567").number()).isEqualTo("001234567");
+        assertThat(IdentityDocument.of("CE", "0012345678").number()).isEqualTo("0012345678");
+
+        for (var invalid : new String[]{"00123456", "00123456789", "AB1234567"}) {
+            assertThatThrownBy(() -> IdentityDocument.of("CE", invalid))
+                    .as("CE invalido: %s", invalid)
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessage("El carne de extranjeria debe tener 9 o 10 digitos");
+        }
+    }
+
+    /**
      * Un DNI y un pasaporte pueden coincidir en digitos sin ser la misma
      * persona, asi que el tipo forma parte de la identidad del documento.
      */

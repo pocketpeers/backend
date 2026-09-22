@@ -14,8 +14,14 @@ public enum DocumentType {
     /** Documento Nacional de Identidad peruano: ocho digitos, siempre. */
     DNI("\\d{8}", "El DNI debe tener exactamente 8 digitos"),
 
-    /** Carne de Extranjeria. Los formatos antiguos y los actuales conviven, de ahi el rango. */
-    CE("[A-Z0-9]{8,12}", "El carne de extranjeria debe tener entre 8 y 12 caracteres alfanumericos"),
+    /**
+     * Carne de Extranjeria: nueve o diez digitos.
+     *
+     * <p>Antes admitia de 8 a 12 caracteres alfanumericos, que dejaba pasar
+     * numeros que no existen. El rango de 9 a 10 cubre los formatos que emite
+     * Migraciones; las letras se quitaron porque el numero no las lleva.</p>
+     */
+    CE("\\d{9,10}", "El carne de extranjeria debe tener 9 o 10 digitos"),
 
     /** Pasaporte, de cualquier pais. El formato lo fija cada emisor, asi que solo se acota la longitud. */
     PASAPORTE("[A-Z0-9]{6,12}", "El pasaporte debe tener entre 6 y 12 caracteres alfanumericos");

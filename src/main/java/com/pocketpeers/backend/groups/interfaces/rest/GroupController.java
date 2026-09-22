@@ -150,16 +150,38 @@ public class GroupController {
         return ResponseEntity.ok(groupResource);
     }
 
+    /**
+     * Elimina el grupo. Solo su administrador.
+     *
+     * <p>No tenia ninguna comprobacion: bastaba una sesion valida y el id para
+     * borrar el grupo de cualquiera, sin ser siquiera miembro. En la aplicacion
+     * no se notaba porque el boton esta oculto para quien no administra, pero
+     * el endpoint estaba abierto a quien conociera la URL.</p>
+     */
     @Operation(summary = "Delete by group ID")
     @DeleteMapping("/{groupId}")
-    public ResponseEntity<?> deleteGroup(@PathVariable Long groupId) {
+    public ResponseEntity<?> deleteGroup(@PathVariable Long groupId, Authentication authentication) {
+        if (!isAuthenticatedGroupAdmin(groupId, authentication)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+        }
         var deleteGroupCommand = new DeleteGroupCommand(groupId);
         groupCommandService.handle(deleteGroupCommand);
         return ResponseEntity.ok("Group with given id successfully deleted");
     }
 
+    /**
+     * Genera el codigo de invitacion. Solo el administrador.
+     *
+     * <p>Tampoco comprobaba nada, y es mas grave de lo que parece: quien obtenia
+     * el token podia entrar al grupo, ver los gastos de sus integrantes y
+     * quedar como contraparte de sus obligaciones.</p>
+     */
+    @Operation(summary = "Generate an invitation code for the group")
     @PostMapping("/{groupId}/generate-invitation")
-    public ResponseEntity<String> generateInvitation(@PathVariable Long groupId) {
+    public ResponseEntity<String> generateInvitation(@PathVariable Long groupId, Authentication authentication) {
+        if (!isAuthenticatedGroupAdmin(groupId, authentication)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+        }
         var command = new GenerateInvitationCommand(groupId);
         var token = groupCommandService.handle(command);
         return ResponseEntity.ok(token);
@@ -216,9 +238,15 @@ public class GroupController {
         }
 
         var created = expensesNotificationService.createManualOverdueReminders(groupId, memberId);
-        var message = created == 0
-                ? "No overdue payments found for this member"
-                : "Manual overdue reminder created";
+        // Este texto viaja tal cual hasta el SnackBar de la aplicacion, asi que
+        // va en español y concuerda con el numero: el mensaje anterior decia
+        // "reminder" en singular aunque el integrante tuviera cuatro deudas
+        // vencidas y se hubieran enviado cuatro avisos.
+        var message = switch (created) {
+            case 0 -> "Este integrante no tiene pagos vencidos";
+            case 1 -> "Se envió el recordatorio";
+            default -> "Se enviaron " + created + " recordatorios";
+        };
         return ResponseEntity.ok(new ManualOverdueReminderResource(memberId, created, false, message));
     }
 

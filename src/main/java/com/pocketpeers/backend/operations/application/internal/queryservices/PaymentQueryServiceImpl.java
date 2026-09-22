@@ -64,10 +64,7 @@ public class PaymentQueryServiceImpl implements PaymentQueryService {
         var user = this.userRepository.findById(query.userId());
         if(user.isEmpty())
             throw new IllegalArgumentException("User information not found for ID: " + query.userId());
-        var payments = paymentRepository.findIncomingPaymentsByUser(
-                user.get().getId(),
-                GroupRole.ADMIN
-        );
+        var payments = paymentRepository.findIncomingPaymentsByUser(user.get().getId());
         return payments.stream().filter(this::isActiveExpensePayment).toList();
     }
 

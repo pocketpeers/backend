@@ -4,6 +4,7 @@ import com.pocketpeers.backend.operations.domain.exceptions.DuplicateReceiptExce
 import com.pocketpeers.backend.users.domain.exceptions.CurrentPasswordMismatchException;
 import com.pocketpeers.backend.users.domain.exceptions.InvalidCredentialsException;
 import com.pocketpeers.backend.users.domain.exceptions.InvalidPasswordResetCodeException;
+import com.pocketpeers.backend.users.domain.exceptions.InvalidSignUpCodeException;
 import com.pocketpeers.backend.users.domain.exceptions.UsernameAlreadyTakenException;
 import com.pocketpeers.backend.users.domain.exceptions.WeakPasswordException;
 import org.springframework.http.HttpStatus;
@@ -76,6 +77,12 @@ public class GlobalExceptionHandler {
     /** Codigo de recuperacion invalido o vencido: 400. */
     @ExceptionHandler(InvalidPasswordResetCodeException.class)
     public ResponseEntity<Map<String,String>> handle(InvalidPasswordResetCodeException ex) {
+        return error("Bad Request", ex.getMessage(), HttpStatus.BAD_REQUEST);
+    }
+
+    /** Codigo de verificacion del correo invalido o vencido. */
+    @ExceptionHandler(InvalidSignUpCodeException.class)
+    public ResponseEntity<Map<String,String>> handle(InvalidSignUpCodeException ex) {
         return error("Bad Request", ex.getMessage(), HttpStatus.BAD_REQUEST);
     }
 
