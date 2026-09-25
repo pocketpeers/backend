@@ -48,7 +48,8 @@ public class UserInformationCommandServiceImpl implements UserInformationCommand
 
         Optional<User> userId = userRepository.findById(command.userId());
         var userInformation = new UserInformation(command.firstName(), command.lastName(), command.phoneNumber(),
-                command.photo(), command.email(), userId.get(), command.identityDocument());
+                command.photo(), command.email(), userId.get(), command.identityDocument(),
+                command.identityVerification());
         userInformationRepository.save(userInformation);
         return Optional.of(userInformation);
     }

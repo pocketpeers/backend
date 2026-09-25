@@ -1,7 +1,9 @@
 package com.pocketpeers.backend.users.domain.model.entities;
 
 import com.pocketpeers.backend.shared.domain.model.entities.AuditableModel;
+import com.pocketpeers.backend.users.domain.model.valueobjects.IdentityVerification;
 import jakarta.persistence.Column;
+import jakarta.persistence.Embedded;
 import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
@@ -71,6 +73,16 @@ public class PendingRegistration extends AuditableModel {
     @Column(nullable = false)
     private int attempts;
 
+    /**
+     * Resultado de la verificacion del DNI, hecha en el primer paso.
+     *
+     * <p>Viaja con el alta pendiente hasta que se confirma el codigo, para no
+     * volver a consultar la fuente externa en el segundo paso: la cuota es
+     * justa y esa consulta ya se hizo.</p>
+     */
+    @Embedded
+    private IdentityVerification identityVerification;
+
     protected PendingRegistration() {
     }
 
@@ -112,5 +124,9 @@ public class PendingRegistration extends AuditableModel {
 
     public void markUsed(LocalDateTime now) {
         this.usedAt = now;
+    }
+
+    public void recordIdentityVerification(IdentityVerification identityVerification) {
+        this.identityVerification = identityVerification;
     }
 }

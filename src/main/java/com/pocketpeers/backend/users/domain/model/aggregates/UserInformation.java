@@ -51,6 +51,15 @@ public class UserInformation extends AuditableAbstractAggregateRoot<UserInformat
     @Embedded
     private IdentityDocument identityDocument;
 
+    /**
+     * Resultado de contrastar el nombre con el DNI en el registro.
+     *
+     * <p>Nulo en las cuentas anteriores a esta verificacion y en las que se
+     * crean por fuera del registro; se leen como no verificadas.</p>
+     */
+    @Embedded
+    private IdentityVerification identityVerification;
+
 
     public UserInformation(String firstName, String lastName, String phoneNumber, String photo, String email, User user) {
         this(firstName, lastName, phoneNumber, photo, email, user, null);
@@ -58,12 +67,18 @@ public class UserInformation extends AuditableAbstractAggregateRoot<UserInformat
 
     public UserInformation(String firstName, String lastName, String phoneNumber, String photo, String email,
                            User user, IdentityDocument identityDocument) {
+        this(firstName, lastName, phoneNumber, photo, email, user, identityDocument, null);
+    }
+
+    public UserInformation(String firstName, String lastName, String phoneNumber, String photo, String email,
+                           User user, IdentityDocument identityDocument, IdentityVerification identityVerification) {
         this.name = new PersonName(firstName, lastName);
         this.phoneNumber = new PhoneNumber(phoneNumber);
         this.photo = new Photo(photo);
         this.email = new EmailAddress(email);
         this.user = user;
         this.identityDocument = identityDocument;
+        this.identityVerification = identityVerification;
     }
 
     public UserInformation(CreateUserInformationCommand command) {
@@ -72,6 +87,7 @@ public class UserInformation extends AuditableAbstractAggregateRoot<UserInformat
         this.photo = new Photo(command.photo());
         this.email = new EmailAddress(command.email());
         this.identityDocument = command.identityDocument();
+        this.identityVerification = command.identityVerification();
         this.user = new User();
     }
 

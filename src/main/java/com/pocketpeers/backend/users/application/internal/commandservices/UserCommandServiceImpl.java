@@ -1,5 +1,6 @@
 package com.pocketpeers.backend.users.application.internal.commandservices;
 
+import com.pocketpeers.backend.users.application.internal.identityverification.IdentityVerificationService;
 import com.pocketpeers.backend.users.application.internal.outboundservices.hashing.HashingService;
 import com.pocketpeers.backend.users.application.internal.outboundservices.tokens.TokenService;
 import com.pocketpeers.backend.users.domain.exceptions.CurrentPasswordMismatchException;
@@ -27,6 +28,7 @@ import org.springframework.beans.factory.annotation.Value;
 import java.util.List;
 import com.pocketpeers.backend.users.domain.model.queries.GetUserInformationByUserIdQuery;
 import com.pocketpeers.backend.users.domain.model.valueobjects.IdentityDocument;
+import com.pocketpeers.backend.users.domain.model.valueobjects.IdentityVerification;
 import com.pocketpeers.backend.users.domain.model.valueobjects.EmailAddress;
 import com.pocketpeers.backend.users.domain.model.valueobjects.PasswordPolicy;
 import com.pocketpeers.backend.users.domain.services.SmtpService;
@@ -63,6 +65,7 @@ public class UserCommandServiceImpl implements UserCommandService {
     private final PasswordResetCodeRepository passwordResetCodeRepository;
     private final PendingRegistrationRepository pendingRegistrationRepository;
     private final SmtpService smtpService;
+    private final IdentityVerificationService identityVerificationService;
 
     /**
      * Si el alta exige confirmar el correo antes de crear la cuenta.
@@ -84,7 +87,8 @@ public class UserCommandServiceImpl implements UserCommandService {
                                   UserInformationRepository userInformationRepository,
                                   PasswordResetCodeRepository passwordResetCodeRepository,
                                   PendingRegistrationRepository pendingRegistrationRepository,
-                                  SmtpService smtpService) {
+                                  SmtpService smtpService,
+                                  IdentityVerificationService identityVerificationService) {
         this.userRepository = userRepository;
         this.hashingService = hashingService;
         this.tokenService = tokenService;
@@ -95,6 +99,7 @@ public class UserCommandServiceImpl implements UserCommandService {
         this.passwordResetCodeRepository = passwordResetCodeRepository;
         this.pendingRegistrationRepository = pendingRegistrationRepository;
         this.smtpService = smtpService;
+        this.identityVerificationService = identityVerificationService;
     }
 
     /**
@@ -146,6 +151,16 @@ public class UserCommandServiceImpl implements UserCommandService {
     @Override
     @Transactional
     public Optional<User> handle(SignUpCommand command) {
+        return createAccount(command, null);
+    }
+
+    /**
+     * Crea la cuenta y su perfil.
+     *
+     * @param identityVerification resultado de la verificacion del DNI, o nulo
+     *                             si el alta no paso por ella
+     */
+    private Optional<User> createAccount(SignUpCommand command, IdentityVerification identityVerification) {
         if (userRepository.existsByUsername(command.username()))
             throw new UsernameAlreadyTakenException(command.username());
         // La contrasena se valida antes de crear nada: si no cumple la politica,
@@ -161,7 +176,7 @@ public class UserCommandServiceImpl implements UserCommandService {
 
         var user = new User(command.username(), hashingService.encode(command.password()), roles);
         var savedUser = userRepository.save(user);
-        CreateUserInformationCommand userInformationCommand = new CreateUserInformationCommand(command.firstName(), command.lastName(), command.phoneNumber(), command.photo(), command.email(), savedUser.getId(), identityDocument);
+        CreateUserInformationCommand userInformationCommand = new CreateUserInformationCommand(command.firstName(), command.lastName(), command.phoneNumber(), command.photo(), command.email(), savedUser.getId(), identityDocument, identityVerification);
         userInformationCommandService.handle(userInformationCommand);
         return Optional.of(user);
     }
@@ -204,7 +219,13 @@ public class UserCommandServiceImpl implements UserCommandService {
             throw new IllegalArgumentException("Ya existe una cuenta con ese correo");
         }
         requireStrongPassword(command.password());
-        IdentityDocument.of(command.documentType(), command.documentNumber());
+        var identityDocument = IdentityDocument.of(command.documentType(), command.documentNumber());
+        // Antes solo se detectaba al confirmar el codigo. Adelantarlo evita
+        // mandar un codigo que no va a servir y, sobre todo, gastar una consulta
+        // de DNI de la cuota en un documento que ya tiene cuenta.
+        if (userInformationRepository.existsByIdentityDocument(identityDocument)) {
+            throw new IllegalArgumentException("Ya existe una cuenta registrada con ese documento de identidad");
+        }
 
         // Un alta pendiente reserva el nombre de usuario mientras vive, para que
         // dos personas distintas no pidan el codigo con el mismo nombre y la
@@ -218,11 +239,18 @@ public class UserCommandServiceImpl implements UserCommandService {
             throw new UsernameAlreadyTakenException(command.username());
         }
 
+        // La verificacion del DNI va al final de las comprobaciones, despues de
+        // todas las que no cuestan nada: cada una que falle antes es una consulta
+        // de la cuota que no se gasta. Y va antes de enviar el correo, para que
+        // un nombre que no coincide se corrija sin haber mandado ningun codigo.
+        var identityVerification = identityVerificationService.verify(
+                identityDocument, command.firstName(), command.lastName(), command.origin());
+
         if (!emailVerificationEnabled) {
             // Interruptor apagado: se crea la cuenta de una vez y se avisa a la
             // aplicacion para que no pida un codigo que nadie envio.
             LOGGER.info("Email verification disabled; creating the account without a code");
-            handle(toSignUpCommand(command));
+            createAccount(toSignUpCommand(command), identityVerification);
             // Tambien por este camino hay cuenta nueva, y tambien merece su
             // bienvenida: si solo se enviara tras confirmar el codigo, apagar la
             // verificacion dejaria a esos usuarios sin ninguna explicacion de
@@ -237,7 +265,7 @@ public class UserCommandServiceImpl implements UserCommandService {
         pendingRegistrationRepository.invalidatePendingFor(command.email(), now);
 
         var code = generateCode();
-        pendingRegistrationRepository.save(new PendingRegistration(
+        var pending = new PendingRegistration(
                 command.email(),
                 command.username(),
                 hashingService.encode(command.password()),
@@ -248,7 +276,9 @@ public class UserCommandServiceImpl implements UserCommandService {
                 command.documentType(),
                 command.documentNumber(),
                 hashingService.encode(code),
-                now));
+                now);
+        pending.recordIdentityVerification(identityVerification);
+        pendingRegistrationRepository.save(pending);
 
         smtpService.sendSignUpVerificationEmailAsync(
                 command.email(),
@@ -300,7 +330,8 @@ public class UserCommandServiceImpl implements UserCommandService {
         var user = userRepository.save(new User(pending.getUsername(), pending.getPasswordHash(), roles));
         userInformationCommandService.handle(new CreateUserInformationCommand(
                 pending.getFirstName(), pending.getLastName(), pending.getPhoneNumber(),
-                pending.getPhoto(), pending.getEmail(), user.getId(), identityDocument));
+                pending.getPhoto(), pending.getEmail(), user.getId(), identityDocument,
+                pending.getIdentityVerification()));
 
         pending.markUsed(now);
         pendingRegistrationRepository.save(pending);

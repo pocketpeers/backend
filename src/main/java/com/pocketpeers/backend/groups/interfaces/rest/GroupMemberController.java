@@ -135,7 +135,8 @@ public class GroupMemberController {
             @PathVariable Long groupId,
             @RequestBody JoinGroupWithTokenResource joinGroupWithTokenResource) {
 
-        var command = new JoinGroupWithTokenCommand(groupId, joinGroupWithTokenResource.token(), joinGroupWithTokenResource.userId());
+        var command = new JoinGroupWithTokenCommand(groupId, joinGroupWithTokenResource.token(), joinGroupWithTokenResource.userId(), joinGroupWithTokenResource.acceptedDeclarationVersion(),
+                joinGroupWithTokenResource.signatureImage());
         var newMember = groupMemberCommandService.handle(command);
         if (newMember.isEmpty()) {
             return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(null); // Or handle as an error
@@ -148,7 +149,8 @@ public class GroupMemberController {
     public ResponseEntity<GroupMemberResource> joinGroupWithToken(
             @RequestBody JoinGroupWithTokenResource joinGroupWithTokenResource) {
 
-        var command = new JoinGroupWithTokenCommand(null, joinGroupWithTokenResource.token(), joinGroupWithTokenResource.userId());
+        var command = new JoinGroupWithTokenCommand(null, joinGroupWithTokenResource.token(), joinGroupWithTokenResource.userId(), joinGroupWithTokenResource.acceptedDeclarationVersion(),
+                joinGroupWithTokenResource.signatureImage());
         var newMember = groupMemberCommandService.handle(command);
         if (newMember.isEmpty()) {
             return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(null);

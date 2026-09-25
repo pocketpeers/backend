@@ -12,7 +12,12 @@ import static org.mockito.Mockito.when;
 import java.time.LocalDateTime;
 import java.util.Optional;
 
+import com.pocketpeers.backend.users.application.internal.identityverification.IdentityVerificationService;
+import com.pocketpeers.backend.users.domain.exceptions.IdentityMismatchException;
 import com.pocketpeers.backend.users.domain.exceptions.UsernameAlreadyTakenException;
+import com.pocketpeers.backend.users.domain.model.valueobjects.IdentityVerification;
+import com.pocketpeers.backend.users.domain.model.valueobjects.IdentityVerificationStatus;
+import org.mockito.ArgumentCaptor;
 import com.pocketpeers.backend.users.domain.model.commands.RequestSignUpCommand;
 import com.pocketpeers.backend.users.domain.model.entities.PendingRegistration;
 import com.pocketpeers.backend.users.domain.services.SmtpService;
@@ -58,6 +63,7 @@ class SignUpVerificationTests {
     @Mock private PasswordResetCodeRepository passwordResetCodeRepository;
     @Mock private PendingRegistrationRepository pendingRegistrationRepository;
     @Mock private SmtpService smtpService;
+    @Mock private IdentityVerificationService identityVerificationService;
 
     private UserCommandServiceImpl service;
 
@@ -68,7 +74,10 @@ class SignUpVerificationTests {
     void setUp() {
         service = new UserCommandServiceImpl(userRepository, hashingService, tokenService, roleRepository,
                 userInformationCommandService, userInformationQueryService, userInformationRepository,
-                passwordResetCodeRepository, pendingRegistrationRepository, smtpService);
+                passwordResetCodeRepository, pendingRegistrationRepository, smtpService,
+                identityVerificationService);
+        when(identityVerificationService.verify(any(), anyString(), anyString(), any()))
+                .thenReturn(IdentityVerification.of(IdentityVerificationStatus.PARTIAL_MATCH, LocalDateTime.now()));
         // El interruptor llega por @Value, que no corre fuera del contexto de
         // Spring: sin esto quedaria en false y el servicio crearia la cuenta de
         // una vez, que es justo el camino que estas pruebas no miran.
@@ -133,6 +142,53 @@ class SignUpVerificationTests {
                 .isInstanceOf(IllegalArgumentException.class);
 
         verify(pendingRegistrationRepository, never()).save(any(PendingRegistration.class));
+        verify(smtpService, never()).sendSignUpVerificationEmailAsync(anyString(), anyString(), anyString());
+    }
+
+    /**
+     * Un nombre que no coincide con el DNI se rechaza sin mandar el correo.
+     *
+     * <p>Es lo que permite que la aplicacion muestre el dialogo de correccion
+     * en vez de pasar a la pantalla del codigo.</p>
+     */
+    @Test
+    void aNameThatDoesNotMatchTheDniStopsTheRequestBeforeSendingAnyCode() {
+        when(identityVerificationService.verify(any(), anyString(), anyString(), any()))
+                .thenThrow(new IdentityMismatchException());
+
+        assertThatThrownBy(() -> service.handle(command()))
+                .isInstanceOf(IdentityMismatchException.class);
+
+        verify(pendingRegistrationRepository, never()).save(any(PendingRegistration.class));
+        verify(smtpService, never()).sendSignUpVerificationEmailAsync(anyString(), anyString(), anyString());
+    }
+
+    /** El resultado de la verificacion viaja con el alta pendiente hasta la confirmacion. */
+    @Test
+    void theVerificationResultIsKeptWithThePendingRegistration() {
+        var captor = ArgumentCaptor.forClass(PendingRegistration.class);
+
+        service.handle(command());
+
+        verify(pendingRegistrationRepository).save(captor.capture());
+        assertThat(captor.getValue().getIdentityVerification().status())
+                .isEqualTo(IdentityVerificationStatus.PARTIAL_MATCH);
+    }
+
+    /**
+     * Un documento que ya tiene cuenta se rechaza antes de verificarlo.
+     *
+     * <p>Consultarlo gastaria una consulta de la cuota en un alta que de todos
+     * modos iba a fallar al confirmar.</p>
+     */
+    @Test
+    void aDocumentThatAlreadyHasAnAccountIsRejectedWithoutSpendingALookup() {
+        when(userInformationRepository.existsByIdentityDocument(any())).thenReturn(true);
+
+        assertThatThrownBy(() -> service.handle(command()))
+                .isInstanceOf(IllegalArgumentException.class);
+
+        verify(identityVerificationService, never()).verify(any(), anyString(), anyString(), any());
         verify(smtpService, never()).sendSignUpVerificationEmailAsync(anyString(), anyString(), anyString());
     }
 }

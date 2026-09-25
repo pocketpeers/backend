@@ -5,6 +5,8 @@ import com.pocketpeers.backend.users.domain.model.commands.ConfirmPasswordResetC
 import com.pocketpeers.backend.users.domain.model.commands.RequestPasswordResetCommand;
 import com.pocketpeers.backend.users.domain.model.commands.RequestSignUpCommand;
 import com.pocketpeers.backend.users.domain.model.commands.ConfirmSignUpCommand;
+import com.pocketpeers.backend.users.domain.model.valueobjects.SignUpOrigin;
+import jakarta.servlet.http.HttpServletRequest;
 import com.pocketpeers.backend.users.interfaces.rest.resources.ConfirmSignUpResource;
 import com.pocketpeers.backend.users.interfaces.rest.resources.SignUpRequestedResource;
 import com.pocketpeers.backend.users.domain.services.UserCommandService;
@@ -87,16 +89,39 @@ public class AuthenticationController {
     @Operation(summary = "Solicitar codigo de verificacion de correo",
             description = "Guarda el alta en espera y envia un codigo de 6 digitos. No crea la cuenta.")
     @PostMapping("/sign-up/request")
-    public ResponseEntity<SignUpRequestedResource> requestSignUp(@RequestBody SignUpResource resource) {
+    public ResponseEntity<SignUpRequestedResource> requestSignUp(
+            @RequestBody SignUpResource resource,
+            @RequestHeader(value = "X-Device-Id", required = false) String deviceId,
+            HttpServletRequest request) {
         var verificationRequired = userCommandService.handle(new RequestSignUpCommand(
                 resource.username(), resource.password(), resource.firstName(), resource.lastName(),
                 resource.phoneNumber(), resource.photo(), resource.email(),
-                resource.documentType(), resource.documentNumber()));
+                resource.documentType(), resource.documentNumber(),
+                new SignUpOrigin(deviceId, clientIp(request))));
         return ResponseEntity.ok(new SignUpRequestedResource(
                 verificationRequired,
                 verificationRequired
                         ? "Te enviamos un codigo a tu correo para terminar de crear tu cuenta."
                         : "Tu cuenta fue creada."));
+    }
+
+    /**
+     * IP real de quien hace la peticion.
+     *
+     * <p>En el servidor el backend escucha detras de Caddy, asi que la conexion
+     * llega desde localhost y la IP de verdad viene en {@code X-Forwarded-For}.
+     * Esa cabecera solo se cree cuando la conexion viene del propio servidor: si
+     * alguien llegara directo al puerto, podria escribirla a mano e inventarse
+     * una IP distinta en cada intento para esquivar el tope por IP.</p>
+     */
+    private static String clientIp(HttpServletRequest request) {
+        var remote = request.getRemoteAddr();
+        var forwarded = request.getHeader("X-Forwarded-For");
+        var fromLocalProxy = "127.0.0.1".equals(remote) || "0:0:0:0:0:0:0:1".equals(remote) || "::1".equals(remote);
+        if (fromLocalProxy && forwarded != null && !forwarded.isBlank()) {
+            return forwarded.split(",")[0].trim();
+        }
+        return remote;
     }
 
     /**

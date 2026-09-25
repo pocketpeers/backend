@@ -2,6 +2,8 @@ package com.pocketpeers.backend.shared.interfaces.rest.exceptions;
 
 import com.pocketpeers.backend.operations.domain.exceptions.DuplicateReceiptException;
 import com.pocketpeers.backend.users.domain.exceptions.CurrentPasswordMismatchException;
+import com.pocketpeers.backend.users.domain.exceptions.IdentityLookupLimitException;
+import com.pocketpeers.backend.users.domain.exceptions.IdentityMismatchException;
 import com.pocketpeers.backend.users.domain.exceptions.InvalidCredentialsException;
 import com.pocketpeers.backend.users.domain.exceptions.InvalidPasswordResetCodeException;
 import com.pocketpeers.backend.users.domain.exceptions.InvalidSignUpCodeException;
@@ -84,6 +86,24 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(InvalidSignUpCodeException.class)
     public ResponseEntity<Map<String,String>> handle(InvalidSignUpCodeException ex) {
         return error("Bad Request", ex.getMessage(), HttpStatus.BAD_REQUEST);
+    }
+
+    /**
+     * El nombre no corresponde al DNI: 422, con un codigo propio en {@code error}.
+     *
+     * <p>No es un 400 generico porque la aplicacion movil tiene que reconocerlo
+     * para mostrar un dialogo que pida corregir el nombre, en vez del aviso
+     * pasajero que usa para los demas errores del formulario.</p>
+     */
+    @ExceptionHandler(IdentityMismatchException.class)
+    public ResponseEntity<Map<String,String>> handle(IdentityMismatchException ex) {
+        return error(IdentityMismatchException.CODE, ex.getMessage(), HttpStatus.UNPROCESSABLE_ENTITY);
+    }
+
+    /** Topes de verificacion de DNI agotados: 429, con un codigo propio en {@code error}. */
+    @ExceptionHandler(IdentityLookupLimitException.class)
+    public ResponseEntity<Map<String,String>> handle(IdentityLookupLimitException ex) {
+        return error(IdentityLookupLimitException.CODE, ex.getMessage(), HttpStatus.TOO_MANY_REQUESTS);
     }
 
     /**

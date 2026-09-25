@@ -5,6 +5,6 @@ import com.pocketpeers.backend.groups.interfaces.rest.resources.CreateGroupResou
 
 public class CreateGroupCommandFromResourceAssembler {
     public static CreateGroupCommand toCommandFromResource(CreateGroupResource createGroupResource) {
-        return new CreateGroupCommand(createGroupResource.name(), createGroupResource.groupPhoto(), createGroupResource.description(), createGroupResource.adminId());
+        return new CreateGroupCommand(createGroupResource.name(), createGroupResource.groupPhoto(), createGroupResource.description(), createGroupResource.adminId(), createGroupResource.acceptedDeclarationVersion(), createGroupResource.signatureImage());
     }
 }

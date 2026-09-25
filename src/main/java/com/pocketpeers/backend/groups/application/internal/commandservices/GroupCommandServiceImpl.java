@@ -1,5 +1,6 @@
 package com.pocketpeers.backend.groups.application.internal.commandservices;
 
+import com.pocketpeers.backend.groups.application.internal.declarations.MembershipDeclarationService;
 import com.pocketpeers.backend.groups.domain.model.aggregates.Group;
 import com.pocketpeers.backend.groups.domain.model.commands.*;
 import com.pocketpeers.backend.groups.domain.model.entities.GroupMember;
@@ -23,15 +24,18 @@ public class GroupCommandServiceImpl implements GroupCommandService {
     private final GroupMemberRepository groupMemberRepository;
     private final UserRepository userRepository;
     private final PblCommandService pblCommandService;
+    private final MembershipDeclarationService membershipDeclarationService;
 
     public GroupCommandServiceImpl(GroupRepository groupRepository,
                                    GroupMemberRepository groupMemberRepository,
                                    UserRepository userRepository,
-                                   PblCommandService pblCommandService) {
+                                   PblCommandService pblCommandService,
+                                   MembershipDeclarationService membershipDeclarationService) {
         this.groupRepository = groupRepository;
         this.groupMemberRepository = groupMemberRepository;
         this.userRepository = userRepository;
         this.pblCommandService = pblCommandService;
+        this.membershipDeclarationService = membershipDeclarationService;
     }
 
 
@@ -55,6 +59,9 @@ public class GroupCommandServiceImpl implements GroupCommandService {
         } catch (Exception e) {
             throw new IllegalArgumentException("Error while saving group: " + e.getMessage());
         }
+
+        membershipDeclarationService.sign(user.getId(), group.getId(), group.getName(),
+                command.acceptedDeclarationVersion(), command.signatureImage());
 
         pblCommandService.handle(RegisterReputationEventCommand.badgeOnly(
                 command.adminId(),
