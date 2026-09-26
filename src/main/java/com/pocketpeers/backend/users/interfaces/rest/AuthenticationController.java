@@ -5,6 +5,7 @@ import com.pocketpeers.backend.users.domain.model.commands.ConfirmPasswordResetC
 import com.pocketpeers.backend.users.domain.model.commands.RequestPasswordResetCommand;
 import com.pocketpeers.backend.users.domain.model.commands.RequestSignUpCommand;
 import com.pocketpeers.backend.users.domain.model.commands.ConfirmSignUpCommand;
+import com.pocketpeers.backend.shared.domain.exceptions.OutdatedClientException;
 import com.pocketpeers.backend.users.domain.model.valueobjects.SignUpOrigin;
 import jakarta.servlet.http.HttpServletRequest;
 import com.pocketpeers.backend.users.interfaces.rest.resources.ConfirmSignUpResource;
@@ -92,7 +93,12 @@ public class AuthenticationController {
     public ResponseEntity<SignUpRequestedResource> requestSignUp(
             @RequestBody SignUpResource resource,
             @RequestHeader(value = "X-Device-Id", required = false) String deviceId,
+            @RequestHeader(value = OutdatedClientException.HEADER, required = false) String appVersion,
             HttpServletRequest request) {
+        // Las versiones anteriores no mandan el identificador del telefono, y
+        // sin el todas comparten un mismo contador de verificaciones de DNI:
+        // tras unos pocos registros, nadie mas con esa version podria hacerlo.
+        OutdatedClientException.requireSupported(appVersion);
         var verificationRequired = userCommandService.handle(new RequestSignUpCommand(
                 resource.username(), resource.password(), resource.firstName(), resource.lastName(),
                 resource.phoneNumber(), resource.photo(), resource.email(),

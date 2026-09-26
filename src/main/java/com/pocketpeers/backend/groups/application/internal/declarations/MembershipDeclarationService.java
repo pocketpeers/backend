@@ -3,6 +3,7 @@ package com.pocketpeers.backend.groups.application.internal.declarations;
 import com.pocketpeers.backend.groups.domain.model.entities.GroupMembershipDeclaration;
 import com.pocketpeers.backend.groups.domain.model.valueobjects.MembershipDeclarationTemplate;
 import com.pocketpeers.backend.groups.infrastructure.persistence.jpa.repositories.GroupMembershipDeclarationRepository;
+import com.pocketpeers.backend.shared.domain.exceptions.OutdatedClientException;
 import com.pocketpeers.backend.users.domain.model.aggregates.UserInformation;
 import com.pocketpeers.backend.users.infrastructure.persistence.jpa.repositories.UserInformationRepository;
 import org.springframework.beans.factory.annotation.Value;
@@ -62,6 +63,11 @@ public class MembershipDeclarationService {
     @Transactional(propagation = Propagation.MANDATORY)
     public GroupMembershipDeclaration sign(Long userId, Long groupId, String groupName, String acceptedVersion,
                                            String signaturePngBase64) {
+        // Sin version ni firma no es alguien que se salto un paso: es una
+        // version de la app anterior a la declaracion, que no sabe pedirla.
+        if (acceptedVersion == null && signaturePngBase64 == null) {
+            throw new OutdatedClientException();
+        }
         if (!MembershipDeclarationTemplate.CURRENT_VERSION.equals(acceptedVersion)) {
             throw new IllegalArgumentException(
                     "Debes aceptar la declaracion jurada vigente (version %s) para unirte al grupo"

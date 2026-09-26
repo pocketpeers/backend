@@ -1,5 +1,6 @@
 package com.pocketpeers.backend.shared.interfaces.rest.exceptions;
 
+import com.pocketpeers.backend.shared.domain.exceptions.OutdatedClientException;
 import com.pocketpeers.backend.operations.domain.exceptions.DuplicateReceiptException;
 import com.pocketpeers.backend.users.domain.exceptions.CurrentPasswordMismatchException;
 import com.pocketpeers.backend.users.domain.exceptions.IdentityLookupLimitException;
@@ -98,6 +99,15 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(IdentityMismatchException.class)
     public ResponseEntity<Map<String,String>> handle(IdentityMismatchException ex) {
         return error(IdentityMismatchException.CODE, ex.getMessage(), HttpStatus.UNPROCESSABLE_ENTITY);
+    }
+
+    /**
+     * Version de la aplicacion que ya no es compatible: 426. El texto va en
+     * {@code message}, que es lo que las versiones anteriores ya muestran.
+     */
+    @ExceptionHandler(OutdatedClientException.class)
+    public ResponseEntity<Map<String,String>> handle(OutdatedClientException ex) {
+        return error(OutdatedClientException.CODE, ex.getMessage(), HttpStatus.UPGRADE_REQUIRED);
     }
 
     /** Topes de verificacion de DNI agotados: 429, con un codigo propio en {@code error}. */
