@@ -67,8 +67,21 @@ public class Group extends AuditableAbstractAggregateRoot<Group> {
         this.invitationToken = new InvitationToken().getToken();
     }
 
+    /**
+     * El codigo del grupo, creado solo si todavia no tiene uno. Es uno fijo por
+     * grupo: antes cada apertura de la invitacion generaba otro y el anterior,
+     * que quiza ya se habia compartido, dejaba de servir sin aviso.
+     */
+    public String ensureInvitationToken() {
+        if (invitationToken == null || invitationToken.isBlank()) {
+            generateInvitationToken();
+        }
+        return invitationToken;
+    }
+
     public boolean hasValidInvitationToken(String token) {
-        return token.equals(this.invitationToken);
+        // Los grupos sin codigo lo guardan vacio: un codigo vacio no abre nada.
+        return token != null && !token.isBlank() && token.equals(this.invitationToken);
     }
 
     public void addMember(GroupMember member) {

@@ -113,6 +113,51 @@ public class FcmNotificationService {
         reminderRepository.save(reminder);
     }
 
+    /**
+     * Push suelto a todos los dispositivos de una persona, sin registro propio.
+     *
+     * <p>Para avisos que no son recordatorios de pago, como las invitaciones a
+     * un grupo: ahi lo que queda guardado es la invitacion misma, y la app la
+     * muestra aunque el push no llegue. Por eso es de mejor esfuerzo y nunca
+     * lanza: que Firebase falle no puede deshacer la invitacion.</p>
+     *
+     * @return cuantos dispositivos aceptaron el mensaje.
+     */
+    public int sendToUser(Long userId, String title, String body, Map<String, String> data) {
+        if (FirebaseApp.getApps().isEmpty()) {
+            return 0;
+        }
+        var delivered = 0;
+        for (var deviceToken : tokenRepository.findByUser_Id(userId)) {
+            var message = Message.builder()
+                    .setToken(deviceToken.getToken())
+                    .setNotification(Notification.builder()
+                            .setTitle(title)
+                            .setBody(body)
+                            .build())
+                    .putAllData(data)
+                    .build();
+            try {
+                FirebaseMessaging.getInstance().send(message);
+                delivered++;
+            } catch (FirebaseMessagingException exc) {
+                LOGGER.warn(
+                        "Failed to send push through FCM. userId={}, tokenId={}, type={}, messagingErrorCode={}",
+                        userId,
+                        deviceToken.getId(),
+                        data.get("type"),
+                        exc.getMessagingErrorCode()
+                );
+                if (isInvalidToken(exc)) {
+                    tokenRepository.delete(deviceToken);
+                }
+            } catch (RuntimeException exc) {
+                LOGGER.warn("Unexpected error sending push. userId={}, type={}", userId, data.get("type"), exc);
+            }
+        }
+        return delivered;
+    }
+
     public FcmNotificationResult sendTestNotification(User user, String title, String body) {
         var tokens = tokenRepository.findByUser_Id(user.getId());
         if (FirebaseApp.getApps().isEmpty()) {

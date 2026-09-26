@@ -6,6 +6,7 @@ import com.pocketpeers.backend.groups.domain.model.commands.*;
 import com.pocketpeers.backend.groups.domain.model.entities.GroupMember;
 import com.pocketpeers.backend.groups.domain.model.valueobjects.GroupRole;
 import com.pocketpeers.backend.groups.domain.services.GroupCommandService;
+import com.pocketpeers.backend.groups.infrastructure.persistence.jpa.repositories.GroupInvitationRepository;
 import com.pocketpeers.backend.groups.infrastructure.persistence.jpa.repositories.GroupMemberRepository;
 import com.pocketpeers.backend.groups.infrastructure.persistence.jpa.repositories.GroupRepository;
 import com.pocketpeers.backend.pbl.domain.model.commands.RegisterReputationEventCommand;
@@ -25,17 +26,20 @@ public class GroupCommandServiceImpl implements GroupCommandService {
     private final UserRepository userRepository;
     private final PblCommandService pblCommandService;
     private final MembershipDeclarationService membershipDeclarationService;
+    private final GroupInvitationRepository groupInvitationRepository;
 
     public GroupCommandServiceImpl(GroupRepository groupRepository,
                                    GroupMemberRepository groupMemberRepository,
                                    UserRepository userRepository,
                                    PblCommandService pblCommandService,
-                                   MembershipDeclarationService membershipDeclarationService) {
+                                   MembershipDeclarationService membershipDeclarationService,
+                                   GroupInvitationRepository groupInvitationRepository) {
         this.groupRepository = groupRepository;
         this.groupMemberRepository = groupMemberRepository;
         this.userRepository = userRepository;
         this.pblCommandService = pblCommandService;
         this.membershipDeclarationService = membershipDeclarationService;
+        this.groupInvitationRepository = groupInvitationRepository;
     }
 
 
@@ -113,6 +117,9 @@ public class GroupCommandServiceImpl implements GroupCommandService {
             throw new IllegalArgumentException("Group does not exist");
         }
         try {
+            // Las invitaciones apuntan al grupo: sin borrarlas antes, la clave
+            // foranea impide borrarlo.
+            groupInvitationRepository.deleteAllByGroupId(command.groupId());
             groupMemberRepository.deleteByGroupId(command.groupId());
             groupRepository.deleteById(command.groupId());
         } catch (Exception e) {
@@ -125,9 +132,12 @@ public class GroupCommandServiceImpl implements GroupCommandService {
         var group = groupRepository.findById(command.groupId())
                 .orElseThrow(() -> new IllegalArgumentException("Group does not exist"));
 
-        group.generateInvitationToken();
-        groupRepository.save(group);
-
-        return group.getInvitationToken();
+        // Devuelve el codigo que ya tiene el grupo; solo se crea uno la primera vez.
+        var previous = group.getInvitationToken();
+        var token = group.ensureInvitationToken();
+        if (!token.equals(previous)) {
+            groupRepository.save(group);
+        }
+        return token;
     }
 }

@@ -91,6 +91,11 @@ public class GroupMemberCommandServiceImpl implements GroupMemberCommandService 
     @Override
     @Transactional
     public Optional<GroupMember> handle(JoinGroupWithTokenCommand command) {
+        // Varios grupos sin codigo lo tienen vacio; buscar por "" encontraria
+        // mas de uno y reventaria en vez de rechazar el codigo.
+        if (command.token() == null || command.token().isBlank()) {
+            throw new IllegalArgumentException("Invalid invitation token");
+        }
         var group = command.groupId() == null
                 ? groupRepository.findByInvitationToken(command.token())
                 .orElseThrow(() -> new IllegalArgumentException("Invalid invitation token"))

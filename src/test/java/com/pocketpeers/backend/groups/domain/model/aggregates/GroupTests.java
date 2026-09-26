@@ -54,6 +54,26 @@ class GroupTests {
     }
 
     @Test
+    void ensureInvitationTokenKeepsTheSameTokenOnceCreated() {
+        Group group = new Group();
+
+        String first = group.ensureInvitationToken();
+        String second = group.ensureInvitationToken();
+
+        assertThat(first).isNotBlank();
+        assertThat(second).isEqualTo(first);
+        assertThat(group.hasValidInvitationToken(first)).isTrue();
+    }
+
+    @Test
+    void groupWithoutTokenRejectsEmptyToken() {
+        Group group = new Group();
+
+        assertThat(group.hasValidInvitationToken("")).isFalse();
+        assertThat(group.hasValidInvitationToken(null)).isFalse();
+    }
+
+    @Test
     void addMemberLinksMemberToGroup() {
         Group group = new Group("Casa", "Gastos casa", "photo.png");
         GroupMember member = new GroupMember(null, new User("ana", "secret"), GroupRole.MEMBER);

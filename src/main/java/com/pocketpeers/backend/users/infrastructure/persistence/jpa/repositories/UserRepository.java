@@ -4,6 +4,7 @@ import com.pocketpeers.backend.users.domain.model.aggregates.User;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 
+import java.util.List;
 import java.util.Optional;
 
 @Repository
@@ -22,5 +23,8 @@ public interface UserRepository extends JpaRepository<User, Long>
      * @return True if the user exists, false otherwise.
      */
     boolean existsByUsername(String username);
+
+    /** Para buscar a quien invitar sin exigir las mayusculas exactas. */
+    List<User> findAllByUsernameIgnoreCase(String username);
 
 }

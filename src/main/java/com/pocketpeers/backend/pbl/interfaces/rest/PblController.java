@@ -8,8 +8,10 @@ import com.pocketpeers.backend.pbl.interfaces.rest.resources.*;
 import com.pocketpeers.backend.pbl.interfaces.rest.transform.RegisterReputationEventCommandFromResourceAssembler;
 import com.pocketpeers.backend.pbl.interfaces.rest.transform.ReputationEventResourceFromEntityAssembler;
 import com.pocketpeers.backend.shared.interfaces.rest.resources.MessageResource;
+import com.pocketpeers.backend.users.domain.model.aggregates.User;
 import com.pocketpeers.backend.users.domain.model.aggregates.UserInformation;
 import com.pocketpeers.backend.users.infrastructure.persistence.jpa.repositories.UserInformationRepository;
+import com.pocketpeers.backend.users.infrastructure.persistence.jpa.repositories.UserRepository;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -28,12 +30,15 @@ public class PblController {
     private final PblCommandService pblCommandService;
     private final PblQueryService pblQueryService;
     private final UserInformationRepository userInformationRepository;
+    private final UserRepository userRepository;
 
     public PblController(PblCommandService pblCommandService, PblQueryService pblQueryService,
-                         UserInformationRepository userInformationRepository) {
+                         UserInformationRepository userInformationRepository,
+                         UserRepository userRepository) {
         this.pblCommandService = pblCommandService;
         this.pblQueryService = pblQueryService;
         this.userInformationRepository = userInformationRepository;
+        this.userRepository = userRepository;
     }
 
     @PostMapping("/events")
@@ -99,6 +104,8 @@ public class PblController {
         var profile = new PublicMemberProfileResource(
                 memberId,
                 userInfo.map(UserInformation::getFullName).orElse(""),
+                // El usuario, no el correo: el correo nunca sale en perfiles ajenos.
+                userRepository.findById(memberId).map(User::getUsername).orElse(""),
                 userInfo.map(UserInformation::getPhoto).orElse(""),
                 reputation,
                 badgesForUser(memberId).stream().filter(BadgeResource::unlocked).toList(),
