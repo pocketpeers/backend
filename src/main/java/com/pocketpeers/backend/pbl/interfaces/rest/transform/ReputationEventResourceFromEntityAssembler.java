@@ -1,5 +1,6 @@
 package com.pocketpeers.backend.pbl.interfaces.rest.transform;
 
+import com.pocketpeers.backend.pbl.application.internal.queryservices.OutcomeRecordAssembler;
 import com.pocketpeers.backend.pbl.domain.model.entities.ReputationEvent;
 import com.pocketpeers.backend.pbl.interfaces.rest.resources.ReputationEventResource;
 
@@ -14,7 +15,10 @@ public class ReputationEventResourceFromEntityAssembler {
                 entity.getPointsDelta(),
                 entity.getResultingScore(),
                 entity.getDescription(),
-                entity.getOccurredAt()
+                entity.getOccurredAt(),
+                OutcomeRecordAssembler.toOutcome(entity) != null,
+                entity.getCounterpartyId() != null
+                        && entity.getCounterpartyId().equals(entity.getUser().getId())
         );
     }
 }
