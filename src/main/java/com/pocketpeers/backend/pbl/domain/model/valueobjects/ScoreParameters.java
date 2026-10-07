@@ -8,8 +8,10 @@ package com.pocketpeers.backend.pbl.domain.model.valueobjects;
  * efecto. Cambiar un valor aqui cambia el comportamiento del score sin tocar
  * el algoritmo.</p>
  *
- * @param priorStrength          peso del promedio del grupo en un usuario sin historial,
- *                               expresado en cantidad equivalente de observaciones
+ * @param priorStrength          peso del punto de partida, expresado en cantidad
+ *                               equivalente de observaciones
+ * @param priorMean              punto de partida, igual para todos: el score de quien
+ *                               todavia no tiene historial es {@code 100 * priorMean}
  * @param counterpartyCap        evidencia maxima que puede aportar una sola contraparte
  * @param halfLifeDays           dias tras los cuales un evento pesa la mitad
  * @param maxEventWeight         tope al peso por monto, para que un gasto atipico no domine
@@ -26,6 +28,7 @@ package com.pocketpeers.backend.pbl.domain.model.valueobjects;
  */
 public record ScoreParameters(
         double priorStrength,
+        double priorMean,
         double counterpartyCap,
         double halfLifeDays,
         double maxEventWeight,
@@ -41,7 +44,14 @@ public record ScoreParameters(
         double goldMinCounterparties
 ) {
 
-    /** Numero minimo de eventos para que las estadisticas de un grupo se consideren confiables. */
+    /**
+     * Numero minimo de eventos para que la tasa observada de un grupo se
+     * considere representativa.
+     *
+     * <p>Ya no interviene en el score: el punto de partida dejo de salir de la
+     * conducta de los demas. Lo sigue usando {@code GroupStatsProviderImpl} para
+     * las estadisticas descriptivas.</p>
+     */
     public static final int MIN_GROUP_EVENTS = 20;
 
     /**
@@ -53,6 +63,7 @@ public record ScoreParameters(
     public static ScoreParameters defaults() {
         return new ScoreParameters(
                 4.0,    // priorStrength
+                0.5,    // priorMean
                 0.35,   // counterpartyCap
                 90.0,   // halfLifeDays
                 3.0,    // maxEventWeight
@@ -73,6 +84,12 @@ public record ScoreParameters(
         if (priorStrength <= 0) {
             throw new IllegalArgumentException("priorStrength debe ser positivo");
         }
+        if (priorMean <= 0 || priorMean >= 1) {
+            // En los extremos alpha o beta valen cero: quien no tiene historial
+            // saldria con 0 o 100 y una banda cerrada, afirmando una certeza que
+            // no existe.
+            throw new IllegalArgumentException("priorMean debe estar en (0, 1)");
+        }
         if (counterpartyCap <= 0 || counterpartyCap > 1) {
             throw new IllegalArgumentException("counterpartyCap debe estar en (0, 1]");
         }
@@ -88,5 +105,13 @@ public record ScoreParameters(
         if (reciprocityPenalty < 0 || reciprocityPenalty > 1) {
             throw new IllegalArgumentException("reciprocityPenalty debe estar en [0, 1]");
         }
+    }
+
+    /** Los mismos parametros con otro punto de partida. */
+    public ScoreParameters withPriorMean(double newPriorMean) {
+        return new ScoreParameters(priorStrength, newPriorMean, counterpartyCap, halfLifeDays,
+                maxEventWeight, reciprocityThreshold, reciprocityPenalty, bronzeScore, silverScore,
+                goldScore, silverMaxBandWidth, goldMaxBandWidth, bronzeMinCounterparties,
+                silverMinCounterparties, goldMinCounterparties);
     }
 }

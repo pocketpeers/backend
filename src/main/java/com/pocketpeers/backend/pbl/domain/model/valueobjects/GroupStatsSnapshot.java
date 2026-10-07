@@ -5,10 +5,10 @@ import java.util.Map;
 /**
  * Estadisticas de todos los grupos y su respaldo global, tomadas en un instante.
  *
- * <p>Van juntas a proposito. El calculador necesita las dos y
- * {@code GroupStats.resolve} elige entre ellas segun si el grupo tiene
- * suficientes eventos, asi que separarlas permitiria calcular un score con la
- * mediana de un grupo y el respaldo de otro momento.</p>
+ * <p>Van juntas a proposito. El calculador escala cada evento con la mediana
+ * de su grupo y recurre a la global solo para eventos sin grupo, asi que
+ * separarlas permitiria calcular un score con la mediana de un grupo y el
+ * respaldo de otro momento.</p>
  *
  * <p>Recalcular a todos los usuarios con una sola foto tambien hace el resultado
  * comparable entre ellos: si las estadisticas cambiaran a mitad de una corrida

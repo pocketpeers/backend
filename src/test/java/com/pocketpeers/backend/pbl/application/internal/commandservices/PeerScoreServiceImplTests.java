@@ -191,8 +191,8 @@ class PeerScoreServiceImplTests {
     @Test
     void paymentsToOneselfLeaveTheUserWithNoEvidence() {
         // Un grupo de un solo miembro registrando y pagando sus propios gastos.
-        // El resultado tiene que ser el de alguien sin historial: el prior del
-        // sistema, no un score alto.
+        // El resultado tiene que ser el de alguien sin historial: el punto de
+        // partida, no un score alto.
         var reputation = givenReputationFor(PAYER);
         givenStats();
         givenHistory(List.of(
@@ -202,7 +202,7 @@ class PeerScoreServiceImplTests {
 
         var result = service().recalculate(PAYER);
 
-        assertThat(result.score()).isEqualTo(70.0);
+        assertThat(result.score()).isEqualTo(50.0);
         assertThat(result.distinctCounterparties()).isZero();
         assertThat(reputation.getPeerLevel()).isEqualTo(ReputationLevel.NEW);
     }

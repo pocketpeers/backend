@@ -1,11 +1,13 @@
 package com.pocketpeers.backend.pbl.domain.model.valueobjects;
 
 import java.math.BigDecimal;
-import java.util.Map;
 
 /**
- * Estadisticas de referencia de un grupo: sirven de escala para los montos y de
- * punto de partida para un usuario sin historial.
+ * Estadisticas de referencia de un grupo.
+ *
+ * <p>El score solo usa la mediana, como escala de los montos. La tasa de
+ * cumplimiento ya no es el punto de partida de nadie (ver
+ * {@code PeerScoreCalculator}): se conserva como dato descriptivo del grupo.</p>
  *
  * <p>Los montos se normalizan contra la mediana del grupo y no contra un valor
  * absoluto en soles. Esa decision es deliberada: un grupo que mueve S/20 y otro
@@ -35,22 +37,5 @@ public record GroupStats(
     /** Si el grupo tiene pocos eventos, sus estadisticas no son representativas. */
     public boolean isReliable() {
         return eventCount >= ScoreParameters.MIN_GROUP_EVENTS;
-    }
-
-    /**
-     * Resuelve las estadisticas aplicables a un grupo, con respaldo en las globales.
-     *
-     * <p>Sin este respaldo, un grupo recien creado con dos eventos produciria un
-     * prior absurdo: dos pagos puntuales darian una tasa de cumplimiento de 100%
-     * que se le aplicaria como punto de partida a todos sus miembros.</p>
-     */
-    public static GroupStats resolve(Long groupId, Map<Long, GroupStats> byGroup, GroupStats global) {
-        if (groupId != null) {
-            GroupStats stats = byGroup.get(groupId);
-            if (stats != null && stats.isReliable()) {
-                return stats;
-            }
-        }
-        return global;
     }
 }

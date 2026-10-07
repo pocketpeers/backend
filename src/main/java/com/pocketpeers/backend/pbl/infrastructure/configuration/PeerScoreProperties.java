@@ -28,11 +28,13 @@ public class PeerScoreProperties {
     private final String algoVersion;
 
     /**
-     * Tasa de cumplimiento que se asume cuando el sistema no tiene historial.
+     * Punto de partida del score, el mismo para todos los usuarios.
      *
-     * <p>0.5 es ignorancia maxima: sin datos, el sistema no afirma que la gente
-     * cumpla ni que incumpla. Un valor optimista regalaria reputacion a quien
-     * todavia no hizo nada, y uno pesimista castigaria por existir.</p>
+     * <p>0.5 es ignorancia maxima: sin datos de una persona, el sistema no afirma
+     * que cumpla ni que incumpla. Un valor optimista regalaria reputacion a quien
+     * todavia no hizo nada, y uno pesimista castigaria por existir. Desde la v2
+     * no se reemplaza por la tasa observada de nadie: el score de una persona no
+     * depende de como paguen los demas.</p>
      */
     private final double neutralOnTimeRate;
 
@@ -66,7 +68,7 @@ public class PeerScoreProperties {
 
     public PeerScoreProperties(
             @Value("${peerscore.enabled:true}") boolean enabled,
-            @Value("${peerscore.algo-version:v1}") String algoVersion,
+            @Value("${peerscore.algo-version:v2}") String algoVersion,
             @Value("${peerscore.neutral-on-time-rate:0.5}") double neutralOnTimeRate,
             @Value("${peerscore.stats-cache-seconds:600}") long statsCacheSeconds,
             @Value("${peerscore.score-cache-seconds:60}") long scoreCacheSeconds) {

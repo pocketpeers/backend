@@ -24,6 +24,17 @@ import java.util.Map;
  * resultado depende solo de los hechos registrados, no del orden en que se
  * procesaron ni de cuantas veces se corrio el calculo.</p>
  *
+ * <h2>El score depende solo de la conducta del propio usuario</h2>
+ *
+ * <p>El punto de partida es el mismo para todos ({@code priorMean}) y no la tasa
+ * de cumplimiento del grupo o del sistema. Con esa tasa, que un companero se
+ * atrasara bajaba el score de los demas, y que el sistema cruzara los 20 eventos
+ * subia de golpe el de todos: el 02-10-2026 los usuarios sin un solo pago
+ * pasaron de 50 a 88 sin haber hecho nada. Lo que si se toma de los demas es
+ * acotado y no premia ni castiga su conducta: la mediana de montos del grupo,
+ * que solo fija la escala, y la evidencia inversa de cada contraparte, que solo
+ * descuenta a dos personas que se pagan mutuamente.</p>
+ *
  * <h2>Por que esta clase no depende de Spring ni de la base de datos</h2>
  *
  * <p>Es una funcion pura a proposito. Recibe los eventos ya cargados y el
@@ -59,8 +70,9 @@ public final class PeerScoreCalculator {
      * Calcula el score de un usuario.
      *
      * @param outcomes         desenlaces de las obligaciones del usuario
-     * @param statsByGroup     estadisticas por grupo, para escalar montos y fijar el prior
-     * @param globalStats      respaldo cuando un grupo tiene pocos eventos
+     * @param statsByGroup     estadisticas por grupo; de ellas solo se usa la mediana de
+     *                         montos, para escalar el peso de cada evento
+     * @param globalStats      mediana de respaldo para los eventos que no tienen grupo
      * @param reverseEvidence  evidencia en sentido inverso por contraparte, para medir
      *                         reciprocidad. El calculador no puede obtenerla por su cuenta
      *                         porque solo ve los eventos de este usuario; la aporta quien
@@ -77,16 +89,16 @@ public final class PeerScoreCalculator {
         Map<Long, Double> reverse = reverseEvidence == null ? Map.of() : reverseEvidence;
 
         if (outcomes == null || outcomes.isEmpty()) {
-            return priorOnlyResult(globalStats);
+            return priorOnlyResult();
         }
 
         List<Weighted> weighted = weigh(outcomes, groupStats, globalStats, now);
-        double prior = weightedPrior(weighted, groupStats, globalStats);
+        double prior = params.priorMean();
 
         Posterior posterior = posteriorFrom(weighted, reverse, prior);
         if (posterior == null) {
             // Todo el historial decayo hasta ser irrelevante: equivale a no tener historial.
-            return priorOnlyResult(globalStats);
+            return priorOnlyResult();
         }
 
         double score = 100.0 * posterior.alpha / (posterior.alpha + posterior.beta);
@@ -192,6 +204,13 @@ public final class PeerScoreCalculator {
      * evidencia mas fuerte que cumplir con S/5, pero no cien veces mas fuerte. El
      * tope evita que un unico gasto atipico domine todo el historial.</p>
      *
+     * <p>El monto se mide contra la mediana del propio grupo del evento, tenga
+     * los eventos que tenga, y no contra la del sistema. Antes se exigian 20
+     * eventos para usar la del grupo, y como un grupo de tres o cuatro personas
+     * casi nunca llega, en la practica el peso de cada pago dependia de cuanto
+     * gastaban desconocidos de otros grupos. La mediana solo mide cuanto se
+     * gasta, no si se paga: que un companero se atrase no la mueve.</p>
+     *
      * <p>La vigencia decae con vida media configurable. Sin decaimiento no existe
      * rehabilitacion: un atraso de hace dos anos pesaria igual que uno de ayer y
      * nadie tendria incentivo para mejorar.</p>
@@ -202,7 +221,7 @@ public final class PeerScoreCalculator {
                                  LocalDateTime now) {
         List<Weighted> result = new ArrayList<>(outcomes.size());
         for (OutcomeRecord outcome : outcomes) {
-            GroupStats stats = GroupStats.resolve(outcome.groupId(), groupStats, globalStats);
+            GroupStats stats = scaleFor(outcome.groupId(), groupStats, globalStats);
             double ratio = outcome.amount().doubleValue() / stats.medianAmount().doubleValue();
             double weight = Math.min(1.0 + Math.log1p(ratio), params.maxEventWeight());
 
@@ -258,9 +277,18 @@ public final class PeerScoreCalculator {
      * 2 x 35% no llega a cubrir el total; sin el piso, cada iteracion recorta un
      * poco mas y la evidencia colapsa a cero. El piso vuelve el problema factible
      * y el bucle converge.</p>
+     *
+     * <p>La {@code n} son las contrapartes efectivas, no las que aparecen. Con
+     * dos pagos puntuales recientes y un atraso de hace un ano, el atraso casi no
+     * pesa y en la practica hay dos contrapartes, no tres: contarlo como una
+     * entera fijaba el piso en 1/3, otra vez infactible para las otras dos, y el
+     * bucle las recortaba hasta dejarlas del tamano del atraso. El resultado era
+     * que un atraso viejo bajaba el score mas que uno de ayer. Lo tapaba un
+     * punto de partida de 70; con el de 50 lo detecto
+     * {@code atrasoAntiguoPesaMenos}.</p>
      */
     private Map<Long, Double> applyCounterpartyCap(Map<Long, Double> evidence) {
-        double effectiveCap = Math.max(params.counterpartyCap(), 1.0 / evidence.size());
+        double effectiveCap = Math.max(params.counterpartyCap(), 1.0 / effectiveCounterparties(evidence));
         Map<Long, Double> capped = new LinkedHashMap<>(evidence);
 
         for (int iteration = 0; iteration < MAX_CAP_ITERATIONS; iteration++) {
@@ -455,12 +483,13 @@ public final class PeerScoreCalculator {
     /**
      * Resultado para quien no tiene historial utilizable.
      *
-     * <p>Arranca en el promedio de su grupo y no en cero. Empezar en cero seria
-     * afirmar que la persona incumple siempre, que es justo lo contrario de lo que
-     * se sabe: no se sabe nada. La banda ancha es la que comunica esa ignorancia.</p>
+     * <p>Arranca en el punto de partida, el mismo para todos, y no en cero.
+     * Empezar en cero seria afirmar que la persona incumple siempre, que es justo
+     * lo contrario de lo que se sabe: no se sabe nada. La banda ancha es la que
+     * comunica esa ignorancia.</p>
      */
-    private ScoreResult priorOnlyResult(GroupStats globalStats) {
-        double prior = globalStats.onTimeRate();
+    private ScoreResult priorOnlyResult() {
+        double prior = params.priorMean();
         double alpha = params.priorStrength() * prior;
         double beta = params.priorStrength() * (1.0 - prior);
         double[] band = BetaQuantiles.band(alpha, beta);
@@ -469,24 +498,19 @@ public final class PeerScoreCalculator {
     }
 
     /**
-     * Prior del usuario: promedio de las tasas de sus grupos, ponderado por cuanta
-     * evidencia aporta cada uno.
-     *
-     * <p>Un usuario que participa en varios grupos no deberia heredar el prior de
-     * uno solo. Ponderar por evidencia hace que pese mas el grupo donde
-     * efectivamente opera.</p>
+     * Estadisticas con las que se escala el monto de un evento: las de su grupo
+     * si existen, y las globales solo para eventos sin grupo.
      */
-    private double weightedPrior(List<Weighted> weighted,
-                                 Map<Long, GroupStats> groupStats,
-                                 GroupStats globalStats) {
-        double weightedSum = 0.0;
-        double totalMass = 0.0;
-        for (Weighted w : weighted) {
-            GroupStats stats = GroupStats.resolve(w.record.groupId(), groupStats, globalStats);
-            weightedSum += stats.onTimeRate() * w.mass();
-            totalMass += w.mass();
+    private static GroupStats scaleFor(Long groupId,
+                                       Map<Long, GroupStats> groupStats,
+                                       GroupStats globalStats) {
+        if (groupId != null) {
+            GroupStats stats = groupStats.get(groupId);
+            if (stats != null) {
+                return stats;
+            }
         }
-        return totalMass < EPSILON ? globalStats.onTimeRate() : weightedSum / totalMass;
+        return globalStats;
     }
 
     private static double sum(Map<Long, Double> values) {

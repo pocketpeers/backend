@@ -5,6 +5,7 @@ import com.pocketpeers.backend.pbl.domain.model.aggregates.UserReputation;
 import com.pocketpeers.backend.pbl.domain.model.valueobjects.GroupStatsSnapshot;
 import com.pocketpeers.backend.pbl.domain.model.valueobjects.NextLevelGoal;
 import com.pocketpeers.backend.pbl.domain.model.valueobjects.OutcomeRecord;
+import com.pocketpeers.backend.pbl.domain.model.valueobjects.ScoreParameters;
 import com.pocketpeers.backend.pbl.domain.model.valueobjects.ScoreResult;
 import com.pocketpeers.backend.pbl.domain.model.valueobjects.ScoreSeriesPoint;
 import com.pocketpeers.backend.pbl.domain.services.GroupStatsProvider;
@@ -34,7 +35,7 @@ public class PeerScoreServiceImpl implements PeerScoreService {
     // spec le prohibe depender de Spring para que los experimentos puedan
     // correrlo cientos de miles de veces sin levantar un contexto, y hay una
     // prueba que falla si aparece una anotacion de framework en la clase.
-    private final PeerScoreCalculator calculator = new PeerScoreCalculator();
+    private final PeerScoreCalculator calculator;
 
     private final UserRepository userRepository;
     private final UserReputationRepository userReputationRepository;
@@ -52,6 +53,8 @@ public class PeerScoreServiceImpl implements PeerScoreService {
         this.reputationEventRepository = reputationEventRepository;
         this.groupStatsProvider = groupStatsProvider;
         this.properties = properties;
+        this.calculator = new PeerScoreCalculator(
+                ScoreParameters.defaults().withPriorMean(properties.getNeutralOnTimeRate()));
     }
 
     /**

@@ -37,7 +37,11 @@ class PeerScoreSpecConformanceTest {
     private static final LocalDateTime NOW = LocalDateTime.of(2026, 8, 1, 12, 0);
     private static final long GROUP = 1L;
 
-    /** Grupo con mediana S/50 y 70% de cumplimiento, usado en los calculos analiticos. */
+    /**
+     * Grupo con mediana S/50 y 70% de cumplimiento, usado en los calculos
+     * analiticos. El 70% ya no entra en ningun calculo: se deja distinto de 0.5
+     * a proposito, para que una regresion que lo volviera a usar se note.
+     */
     private static final GroupStats STATS = new GroupStats(BigDecimal.valueOf(50), 0.70, 1000);
     private static final Map<Long, GroupStats> GROUPS = Map.of(GROUP, STATS);
 
@@ -53,6 +57,7 @@ class PeerScoreSpecConformanceTest {
         ScoreParameters p = ScoreParameters.defaults();
 
         assertEquals(4.0, p.priorStrength(), 0.0, "prior-strength");
+        assertEquals(0.5, p.priorMean(), 0.0, "prior-mean");
         assertEquals(0.35, p.counterpartyCap(), 0.0, "counterparty-cap");
         assertEquals(90.0, p.halfLifeDays(), 0.0, "half-life-days");
         assertEquals(3.0, p.maxEventWeight(), 0.0, "max-event-weight");
@@ -95,11 +100,11 @@ class PeerScoreSpecConformanceTest {
         // Con una sola contraparte no hay tope (tauEff = max(0.35, 1/1) = 1), asi
         // que el score se puede derivar a mano:
         //   w     = 1 + ln(1 + 50/50) = 1 + ln 2  = 1.6931472
-        //   alpha = 4 * 0.70 + 1.6931472 * 1.0    = 4.4931472
-        //   beta  = 4 * 0.30                      = 1.2
-        //   score = 100 * alpha / (alpha + beta)  = 78.922
+        //   alpha = 4 * 0.5 + 1.6931472 * 1.0     = 3.6931472
+        //   beta  = 4 * 0.5                       = 2.0
+        //   score = 100 * alpha / (alpha + beta)  = 64.870
         double w = 1.0 + Math.log(2.0);
-        double expected = 100.0 * (2.8 + w) / (2.8 + w + 1.2);
+        double expected = 100.0 * (2.0 + w) / (2.0 + w + 2.0);
 
         double actual = score(List.of(event(10L, 50, PaymentOutcome.PUNTUAL, 0)));
 
@@ -111,9 +116,9 @@ class PeerScoreSpecConformanceTest {
     @DisplayName("3.3 paso 1 - A los 90 dias exactos un evento pesa la mitad")
     void decaimientoAUnaVidaMediaEsExactamenteLaMitad() {
         //   w     = 1 + ln 2, delta = 2^(-90/90) = 0.5
-        //   alpha = 2.8 + (1 + ln 2) * 0.5
+        //   alpha = 2.0 + (1 + ln 2) * 0.5
         double w = 1.0 + Math.log(2.0);
-        double expected = 100.0 * (2.8 + w * 0.5) / (2.8 + w * 0.5 + 1.2);
+        double expected = 100.0 * (2.0 + w * 0.5) / (2.0 + w * 0.5 + 2.0);
 
         double actual = score(List.of(event(10L, 50, PaymentOutcome.PUNTUAL, 90)));
 
@@ -125,9 +130,9 @@ class PeerScoreSpecConformanceTest {
     @DisplayName("3.3 paso 5 - Un vencido aporta al parametro beta, no al alpha")
     void vencidoAportaAlLadoDelIncumplimiento() {
         //   v = 0, asi que todo el peso va a beta:
-        //   alpha = 2.8 ; beta = 1.2 + (1 + ln 2)
+        //   alpha = 2.0 ; beta = 2.0 + (1 + ln 2)
         double w = 1.0 + Math.log(2.0);
-        double expected = 100.0 * 2.8 / (2.8 + 1.2 + w);
+        double expected = 100.0 * 2.0 / (2.0 + 2.0 + w);
 
         double actual = score(List.of(event(10L, 50, PaymentOutcome.VENCIDO, 0)));
 
@@ -135,9 +140,9 @@ class PeerScoreSpecConformanceTest {
     }
 
     @Test
-    @DisplayName("3.3 - Sin historial el score es el prior del grupo, o sea 100 * tasa")
+    @DisplayName("3.3 - Sin historial el score es el punto de partida, 100 * priorMean")
     void sinHistorialElScoreEsElPrior() {
-        assertEquals(70.0, score(List.of()), 0.001);
+        assertEquals(50.0, score(List.of()), 0.001);
     }
 
     @Test
@@ -145,8 +150,8 @@ class PeerScoreSpecConformanceTest {
     void pesoPorMontoSeTopa() {
         // Un monto enorme deberia empujar el peso mas alla de 3, pero el tope lo
         // detiene. Con un solo evento puntual sin decaimiento:
-        //   alpha = 2.8 + 3.0 ; beta = 1.2
-        double expected = 100.0 * (2.8 + 3.0) / (2.8 + 3.0 + 1.2);
+        //   alpha = 2.0 + 3.0 ; beta = 2.0
+        double expected = 100.0 * (2.0 + 3.0) / (2.0 + 3.0 + 2.0);
 
         double actual = score(List.of(event(10L, 5_000_000, PaymentOutcome.PUNTUAL, 0)));
 

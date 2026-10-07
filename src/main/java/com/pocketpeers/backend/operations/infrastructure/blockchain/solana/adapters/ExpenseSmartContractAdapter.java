@@ -232,9 +232,20 @@ public class ExpenseSmartContractAdapter implements ExpenseSmartContractPort {
      */
     @Override
     @Transactional
-    public TransactionHash recordPayment(Expense expense, Payment payment) throws Exception {
-        ExpenseChain expenseChainEntity = expenseChainRepository.findByExpense(expense)
+    public TransactionHash recordPayment(Expense expense, Payment eventPayment) throws Exception {
+        // El bloqueo se toma antes de leer nada, de la base o de la cadena: un
+        // segundo movimiento del mismo gasto espera aqui hasta que el primero
+        // confirme y guarde su eslabon, y entonces lee el estado ya avanzado.
+        ExpenseChain expenseChainEntity = expenseChainRepository.lockByExpenseId(expense.getId())
                 .orElseThrow(() -> new RuntimeException("Expense contract not found for the given expense"));
+
+        // El pago se relee ya con el turno tomado. El del evento es una foto del
+        // momento en que se publico, y dos eventos seguidos del mismo pago
+        // (pagar y confirmar) pueden llegar aqui en cualquier orden: con la foto
+        // vieja, el segundo en entrar podria anclar el estado anterior encima
+        // del nuevo. Releido, los dos anclan el estado actual y el segundo cae
+        // en la comprobacion de "ya registrado" de mas abajo.
+        Payment payment = paymentRepository.findById(eventPayment.getId()).orElse(eventPayment);
 
         PublicKey programPublicKey = new PublicKey(programId);
         PublicKey authority = solanaClient.getSignerAccount().getPublicKey();

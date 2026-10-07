@@ -88,27 +88,11 @@ public class GroupStatsProviderImpl implements GroupStatsProvider {
     }
 
     /**
-     * Estadisticas globales, que hacen de respaldo de todo grupo pequeno.
+     * Estadisticas globales: la mediana de respaldo para los eventos sin grupo.
      *
-     * <p>La tasa observada solo se usa cuando hay suficientes eventos para que
-     * signifique algo. Debajo de ese piso se usa la neutra, aunque la mediana
-     * si sea la observada: son dos cosas distintas, y una mediana calculada con
-     * pocos montos ya sirve de escala mientras que una tasa calculada con pocos
-     * desenlaces no sirve de prior.</p>
-     *
-     * <p>El piso no es opcional. El prior entra como {@code alpha = k * tasa} y
-     * {@code beta = k * (1 - tasa)}: con los primeros pagos del sistema todos
-     * puntuales la tasa es 1.0, y entonces {@code beta} vale 0. Eso hace dos
-     * cosas a la vez, las dos falsas. Cualquier usuario sin un solo pago recibe
-     * score 100, porque su posterior es solo el prior. Y la banda de quien tiene
-     * tres pagos se cierra casi por completo, cuando su unica funcion es decir
-     * que el sistema todavia no sabe lo suficiente.</p>
-     *
-     * <p>El umbral es el mismo {@code MIN_GROUP_EVENTS} que {@code isReliable()}
-     * aplica a los grupos. El spec define esa regla de respaldo pero
-     * {@code GroupStats.resolve} solo la aplica a las estadisticas por grupo, y
-     * nunca a las globales: si las globales tampoco son confiables no hay
-     * ningun respaldo mas al que caer, y ahi es donde se usa la tasa neutra.</p>
+     * <p>La tasa global es solo descriptiva; el score ya no la usa como punto de
+     * partida. Debajo de {@code MIN_GROUP_EVENTS} se informa la neutra, porque
+     * una tasa calculada con pocos desenlaces no describe nada.</p>
      */
     private GroupStats globalStats(List<OutcomeRecord> outcomes) {
         if (!outcomes.isEmpty() && outcomes.size() < ScoreParameters.MIN_GROUP_EVENTS) {

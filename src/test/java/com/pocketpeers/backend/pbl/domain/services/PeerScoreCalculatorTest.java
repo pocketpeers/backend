@@ -127,7 +127,7 @@ class PeerScoreCalculatorTest {
         // Prueba de regresion. Con tope 0.35 y dos contrapartes la restriccion
         // "cada una aporta como maximo el 35%" es imposible de satisfacer entre
         // dos. Sin el piso 1/n, cada iteracion recorta mas y la evidencia tiende
-        // a cero: el score caeria al prior del grupo, o sea 70.
+        // a cero: el score caeria al punto de partida, o sea 50.
         List<OutcomeRecord> outcomes = new ArrayList<>();
         for (int i = 0; i < 10; i++) {
             outcomes.add(event(i % 2 == 0 ? 10L : 11L, 50, PaymentOutcome.PUNTUAL, i));
@@ -137,7 +137,7 @@ class PeerScoreCalculatorTest {
 
         assertTrue(result.score() > 85,
                 "la evidencia colapso: el score cayo a " + result.score()
-                        + ", cerca del prior 70, en vez de reflejar diez pagos puntuales");
+                        + ", cerca del punto de partida 50, en vez de reflejar diez pagos puntuales");
         assertTrue(result.effectiveCounterparties() > 1.9,
                 "contrapartes efectivas: " + result.effectiveCounterparties());
     }
@@ -174,15 +174,57 @@ class PeerScoreCalculatorTest {
     }
 
     @Test
-    @DisplayName("Sin historial, el score parte del promedio del grupo y no de cero")
-    void sinEventosDevuelvePriorDelGrupo() {
+    @DisplayName("Sin historial, el score parte de 50 y no de cero")
+    void sinEventosDevuelvePuntoDePartida() {
         ScoreResult result = calculate(List.of());
 
-        assertEquals(70.0, result.score(), 0.001,
+        assertEquals(50.0, result.score(), 0.001,
                 "empezar en cero afirmaria que la persona incumple siempre");
         assertEquals(ReputationLevel.NEW, result.level());
         assertEquals(0.0, result.effectiveCounterparties(), 0.001);
         assertTrue(result.breakdown().isEmpty());
+    }
+
+    @Test
+    @DisplayName("Que los demas cumplan o no, no mueve el score de una persona")
+    void conductaAjenaNoMueveElScore() {
+        // Regresion del 02-10-2026. Con la tasa de cumplimiento como punto de
+        // partida, el atraso de un companero bajaba el score de todo el grupo, y
+        // al cruzar el sistema los 20 eventos los usuarios sin pagos pasaron de
+        // 50 a 88. Aqui el mismo historial se mide en un grupo que cumple casi
+        // siempre y en otro que casi nunca: tiene que dar exactamente lo mismo.
+        GroupStats cumplidor = new GroupStats(BigDecimal.valueOf(50), 0.95, 500);
+        GroupStats incumplidor = new GroupStats(BigDecimal.valueOf(50), 0.10, 500);
+        List<OutcomeRecord> outcomes = List.of(
+                event(10L, 50, PaymentOutcome.PUNTUAL, 2),
+                event(11L, 50, PaymentOutcome.TARDIO, 6));
+
+        ScoreResult enCumplidor = calculator.calculate(
+                outcomes, Map.of(GROUP, cumplidor), cumplidor, Map.of(), NOW);
+        ScoreResult enIncumplidor = calculator.calculate(
+                outcomes, Map.of(GROUP, incumplidor), incumplidor, Map.of(), NOW);
+
+        assertEquals(enCumplidor.score(), enIncumplidor.score(), 1e-12);
+        assertEquals(enCumplidor.bandLow(), enIncumplidor.bandLow(), 1e-12);
+        assertEquals(50.0, calculator.calculate(
+                List.of(), Map.of(), cumplidor, Map.of(), NOW).score(), 1e-12,
+                "sin historial tampoco hereda la tasa del sistema");
+    }
+
+    @Test
+    @DisplayName("La escala de montos es la del propio grupo, aunque tenga pocos eventos")
+    void escalaEsLaDelPropioGrupo() {
+        // Un grupo de tres personas casi nunca junta 20 eventos. Si por eso se
+        // usara la mediana global, el peso de cada pago dependeria de cuanto
+        // gastan desconocidos de otros grupos.
+        GroupStats grupoChico = new GroupStats(BigDecimal.valueOf(20), 0.70, 3);
+        GroupStats global = new GroupStats(BigDecimal.valueOf(500), 0.70, 5000);
+        OutcomeRecord pago = event(10L, 20, PaymentOutcome.PUNTUAL, 0);
+
+        double masa = calculator.evidenceMass(pago, Map.of(GROUP, grupoChico), global, NOW);
+
+        assertEquals(1.0 + Math.log(2.0), masa, 1e-9,
+                "S/20 en un grupo cuya mediana es S/20 pesa 1 + ln 2, no lo que diga la global");
     }
 
     // ------------------------------------------------------------------
@@ -291,11 +333,14 @@ class PeerScoreCalculatorTest {
     @DisplayName("Los parametros invalidos se rechazan al construirlos")
     void parametrosInvalidosSeRechazan() {
         assertThrowsIllegalArgument(() -> new ScoreParameters(
-                -1, 0.35, 90, 3, 0.8, 0.5, 25, 60, 85, 18, 12, 2, 3, 4));
+                -1, 0.5, 0.35, 90, 3, 0.8, 0.5, 25, 60, 85, 18, 12, 2, 3, 4));
         assertThrowsIllegalArgument(() -> new ScoreParameters(
-                4, 1.5, 90, 3, 0.8, 0.5, 25, 60, 85, 18, 12, 2, 3, 4));
+                4, 0.5, 1.5, 90, 3, 0.8, 0.5, 25, 60, 85, 18, 12, 2, 3, 4));
         assertThrowsIllegalArgument(() -> new ScoreParameters(
-                4, 0.35, 0, 3, 0.8, 0.5, 25, 60, 85, 18, 12, 2, 3, 4));
+                4, 0.5, 0.35, 0, 3, 0.8, 0.5, 25, 60, 85, 18, 12, 2, 3, 4));
+        // Un punto de partida en 0 o 1 deja alpha o beta en cero.
+        assertThrowsIllegalArgument(() -> new ScoreParameters(
+                4, 1.0, 0.35, 90, 3, 0.8, 0.5, 25, 60, 85, 18, 12, 2, 3, 4));
     }
 
     // ------------------------------------------------------------------
